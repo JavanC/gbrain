@@ -174,6 +174,8 @@ async function main() {
       const { awaitPendingSearchCacheWrites } = await import('./core/search/hybrid.ts');
       await awaitPendingSearchCacheWrites();
     }
+    const { awaitPendingLastRetrievedWrites } = await import('./core/last-retrieved.ts');
+    await awaitPendingLastRetrievedWrites();
   } catch (e: unknown) {
     if (e instanceof OperationError) {
       console.error(`Error [${e.code}]: ${e.message}`);
