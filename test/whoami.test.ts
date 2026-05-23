@@ -10,6 +10,7 @@
 import { test, expect, describe } from 'bun:test';
 import { operations, OperationError } from '../src/core/operations.ts';
 import type { OperationContext, AuthInfo } from '../src/core/operations.ts';
+import { buildStdioAuth } from '../src/mcp/server.ts';
 
 const whoami = operations.find(o => o.name === 'whoami')!;
 
@@ -92,6 +93,19 @@ describe('whoami op contract', () => {
     expect(result.token_name).toBe('my-personal-token');
     expect(result.scopes).toEqual(['read', 'write', 'admin']);
     expect(result.expires_at).toBeNull();
+  });
+
+  test('stdio MCP synthetic auth reports legacy identity without becoming local', async () => {
+    const auth = buildStdioAuth('javan-brain');
+    const result = (await whoami.handler(
+      ctxWith({ remote: true, sourceId: 'javan-brain', auth }),
+      {},
+    )) as any;
+    expect(result.transport).toBe('legacy');
+    expect(result.token_name).toBe('stdio-mcp');
+    expect(result.scopes).toEqual(['read']);
+    expect(auth.sourceId).toBe('javan-brain');
+    expect(auth.allowedSources).toEqual(['javan-brain']);
   });
 
   // Q3: ambiguous transport — fail-closed. The footgun this guards against

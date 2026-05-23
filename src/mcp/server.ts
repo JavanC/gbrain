@@ -7,6 +7,18 @@ import { VERSION } from '../version.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { dispatchToolCall, validateParams, buildOperationContext } from './dispatch.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
+import type { AuthInfo } from '../core/operations.ts';
+
+export function buildStdioAuth(sourceId: string): AuthInfo {
+  return {
+    token: 'stdio',
+    clientId: 'stdio',
+    clientName: 'stdio-mcp',
+    scopes: ['read'],
+    sourceId,
+    allowedSources: [sourceId],
+  };
+}
 
 export async function startMcpServer(engine: BrainEngine) {
   const server = new Server(
@@ -28,6 +40,7 @@ export async function startMcpServer(engine: BrainEngine) {
   // shape and cast through `any` (the SDK accepts it via the ServerResult union).
   server.setRequestHandler(CallToolRequestSchema, async (request: any): Promise<any> => {
     const { name, arguments: params } = request.params;
+    const sourceId = process.env.GBRAIN_SOURCE || 'default';
     // v0.28: stdio MCP has no per-token auth (local pipe). Default the
     // takes-holder allow-list to ['world'] so agent-facing callers don't
     // see private hunches via takes_list / takes_search / query. Operators
@@ -39,7 +52,12 @@ export async function startMcpServer(engine: BrainEngine) {
       // v0.31: source defaults to 'default' for stdio (no per-token scope).
       // Operators who want a different source on stdio MCP should set
       // GBRAIN_SOURCE in the env or use --source via `gbrain call`.
-      sourceId: process.env.GBRAIN_SOURCE || 'default',
+      sourceId,
+      // Stdio MCP is still remote/untrusted, but it has no bearer/OAuth
+      // credential. Thread a synthetic identity so introspection tools like
+      // whoami don't fail unknown_transport while security gates keep seeing
+      // remote=true.
+      auth: buildStdioAuth(sourceId),
       // v0.31 (eD3): _meta.brain_hot_memory injection so Claude Desktop /
       // Code see the brain's relevant hot memory automatically alongside
       // every tool-call response. Best-effort; absorbs errors.
