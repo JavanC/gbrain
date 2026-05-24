@@ -264,6 +264,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     sql,
     tokenTtl,
     dcrDisabled: !enableDcr,
+    dcrSourceId: process.env.GBRAIN_SOURCE || 'default',
+    dcrFederatedRead: [process.env.GBRAIN_SOURCE || 'default'],
   });
 
   // Sweep expired tokens on startup (non-blocking)

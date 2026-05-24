@@ -1167,6 +1167,33 @@ describe('F12 dcrDisabled constructor option', () => {
     expect(typeof dcrOn.clientsStore.registerClient).toBe('function');
   });
 
+  test('registerClient assigns configured DCR source scope', async () => {
+    await sql`
+      INSERT INTO sources (id, name, local_path, config)
+      VALUES (${'javan-brain'}, ${'Javan Brain'}, ${'/tmp/javan-brain'}, ${'{"federated":true}'})
+      ON CONFLICT (id) DO NOTHING
+    `;
+    const dcrOn = new GBrainOAuthProvider({
+      sql,
+      dcrSourceId: 'javan-brain',
+      dcrFederatedRead: ['javan-brain'],
+    });
+    const result = await dcrOn.clientsStore.registerClient!({
+      client_name: 'dcr-source-scoped-client',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code'],
+      scope: 'read write',
+      token_endpoint_auth_method: 'none',
+    });
+    const rows = await sql`
+      SELECT source_id, federated_read
+      FROM oauth_clients
+      WHERE client_id = ${result.client_id}
+    `;
+    expect(rows[0].source_id).toBe('javan-brain');
+    expect(rows[0].federated_read).toEqual(['javan-brain']);
+  });
+
   test('registerClientManual still works on dcrDisabled providers (CLI path)', async () => {
     // The CLI code path uses registerClientManual, which is independent of
     // the DCR /register endpoint. dcrDisabled must NOT break it.

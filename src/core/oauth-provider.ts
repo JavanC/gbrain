@@ -122,6 +122,10 @@ interface GBrainOAuthProviderOptions {
    * before mcpAuthRouter ran).
    */
   dcrDisabled?: boolean;
+  /** Source assigned to DCR-created clients. Defaults to 'default'. */
+  dcrSourceId?: string;
+  /** Federated read scope assigned to DCR-created clients. Defaults to [dcrSourceId]. */
+  dcrFederatedRead?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -129,7 +133,11 @@ interface GBrainOAuthProviderOptions {
 // ---------------------------------------------------------------------------
 
 class GBrainClientsStore implements OAuthRegisteredClientsStore {
-  constructor(private sql: SqlQuery) {}
+  constructor(
+    private sql: SqlQuery,
+    private dcrSourceId = 'default',
+    private dcrFederatedRead?: string[],
+  ) {}
 
   async getClient(clientId: string): Promise<OAuthClientInformationFull | undefined> {
     const rows = await this.sql`
@@ -195,11 +203,14 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     const secretHash = clientSecret ? hashToken(clientSecret) : null;
     const now = Math.floor(Date.now() / 1000);
 
-    // v0.34.1 (#861, D2 + D13 + #876): DCR clients get source_id='default'
-    // (matches legacy fallback) and federated_read=['default'] (read scope
-    // == write scope). Operators who need narrower / wider scope rescope
-    // via the CLI later. Pre-v60/v61 brain falls through to the legacy
-    // projection (no source_id / federated_read column yet).
+    // v0.34.1 (#861, D2 + D13 + #876): DCR clients originally defaulted to
+    // source_id='default'. v0.37.8 downstream: let HTTP hosts bind DCR clients
+    // to the served source (GBRAIN_SOURCE) so remote MCP clients created by
+    // Codex/Claude do not accidentally land on an empty seeded source.
+    const sourceId = this.dcrSourceId || 'default';
+    const federatedRead = this.dcrFederatedRead && this.dcrFederatedRead.length > 0
+      ? this.dcrFederatedRead
+      : [sourceId];
     try {
       await this.sql`
         INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
@@ -209,7 +220,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
                 ${pgArray((client.redirect_uris || []).map(String))},
                 ${pgArray(client.grant_types || ['client_credentials'])},
                 ${client.scope || ''}, ${authMethod},
-                ${now}, ${'default'}, ${pgArray(['default'])})
+                ${now}, ${sourceId}, ${pgArray(federatedRead)})
       `;
     } catch (err) {
       if (isUndefinedColumnError(err, 'federated_read')) {
@@ -222,7 +233,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
                     ${pgArray((client.redirect_uris || []).map(String))},
                     ${pgArray(client.grant_types || ['client_credentials'])},
                     ${client.scope || ''}, ${authMethod},
-                    ${now}, ${'default'})
+                    ${now}, ${sourceId})
           `;
         } catch (err2) {
           if (isUndefinedColumnError(err2, 'source_id')) {
@@ -284,7 +295,11 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
   constructor(options: GBrainOAuthProviderOptions) {
     this.sql = options.sql;
-    this._clientsStore = new GBrainClientsStore(this.sql);
+    this._clientsStore = new GBrainClientsStore(
+      this.sql,
+      options.dcrSourceId || 'default',
+      options.dcrFederatedRead,
+    );
     this.dcrDisabled = options.dcrDisabled === true;
     this.tokenTtl = options.tokenTtl || 3600;
     this.refreshTtl = options.refreshTtl || 30 * 24 * 3600;
