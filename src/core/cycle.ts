@@ -479,6 +479,12 @@ export interface CycleOpts {
    * Validated via `assertValidSourceId` in `cycleLockIdFor` (defense-in-depth).
    */
   sourceId?: string;
+  /** Include slug globs for propose_takes. Repeatable from CLI. */
+  proposeInclude?: string[];
+  /** Exclude slug globs for propose_takes. Repeatable from CLI. */
+  proposeExclude?: string[];
+  /** Optional page scan limit for propose_takes. */
+  proposeLimit?: number;
 }
 
 // ─── Lock primitives ───────────────────────────────────────────────
@@ -2029,7 +2035,12 @@ export async function runCycle(
           checkAborted(opts.signal);
           progress.start('cycle.propose_takes');
           const { runPhaseProposeTakes } = await import('./cycle/propose-takes.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { repoPath: brainDir ?? undefined }) as Promise<PhaseResult>);
+          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, {
+            repoPath: brainDir ?? undefined,
+            includeSlugs: opts.proposeInclude,
+            excludeSlugs: opts.proposeExclude,
+            pageLimit: opts.proposeLimit,
+          }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();

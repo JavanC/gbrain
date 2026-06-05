@@ -66,6 +66,12 @@ interface DreamArgs {
    * until a follow-up CLI cleanup picks one. Supersedes PR #1559.
    */
   source: string | null;
+  /** v1.1: include slug globs for propose_takes. Repeatable. */
+  proposeInclude: string[];
+  /** v1.1: exclude slug globs for propose_takes. Repeatable. */
+  proposeExclude: string[];
+  /** v1.1: page limit override for propose_takes. */
+  proposeLimit: number | null;
   /**
    * issue #1678: bounded single-hold backlog drain. `--drain` (currently only
    * for `--phase extract_atoms`) holds the cycle lock once and loops bounded
@@ -98,6 +104,17 @@ function collectFlagValues(args: string[], flag: string): string[] | null {
     if (args[i] !== flag) continue;
     const v = args[i + 1];
     if (v === undefined) return null; // flag at end of argv
+    values.push(v);
+  }
+  return values;
+}
+
+function collectRepeatableFlagValues(args: string[], flag: string): string[] | null {
+  const values: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== flag) continue;
+    const v = args[i + 1];
+    if (v === undefined) return null;
     values.push(v);
   }
   return values;
@@ -192,6 +209,27 @@ function parseArgs(args: string[]): DreamArgs {
   }
   const source = uniqSource[0] ?? uniqSourceId[0] ?? null;
 
+  const proposeInclude = collectRepeatableFlagValues(args, '--propose-include');
+  const proposeExclude = collectRepeatableFlagValues(args, '--propose-exclude');
+  if (proposeInclude === null) {
+    console.error('--propose-include <glob>: missing value');
+    process.exit(2);
+  }
+  if (proposeExclude === null) {
+    console.error('--propose-exclude <glob>: missing value');
+    process.exit(2);
+  }
+  const proposeLimitIdx = args.indexOf('--propose-limit');
+  let proposeLimit: number | null = null;
+  if (proposeLimitIdx !== -1) {
+    const raw = args[proposeLimitIdx + 1];
+    if (raw === undefined || !/^\d+$/.test(raw.trim()) || parseInt(raw, 10) <= 0) {
+      console.error(`--propose-limit must be a positive integer; got "${raw}"`);
+      process.exit(2);
+    }
+    proposeLimit = parseInt(raw, 10);
+  }
+
   // issue #1678: --drain [--window <seconds>]. Only extract_atoms is drainable
   // this wave (it has a real eligibility predicate; synthesize_concepts does
   // not — Codex #12). --drain with no --phase defaults to extract_atoms.
@@ -227,6 +265,9 @@ function parseArgs(args: string[]): DreamArgs {
     to,
     bypassDreamGuard: args.includes('--unsafe-bypass-dream-guard'),
     source,
+    proposeInclude,
+    proposeExclude,
+    proposeLimit,
     drain,
     windowSeconds,
   };
@@ -346,6 +387,14 @@ Options:
                       know the input file is NOT dream-cycle output but the
                       guard is firing. Loud stderr warning + cost reminder
                       fires every run.
+
+  --propose-include <glob>
+                      Restrict --phase propose_takes to matching page slugs.
+                      Repeatable. Example: --propose-include 'projects/**'
+  --propose-exclude <glob>
+                      Exclude matching page slugs from propose_takes.
+                      Repeatable. Example: --propose-exclude 'extracts/**'
+  --propose-limit <N> Limit propose_takes page scan count.
 
   --help, -h          Show this help
 
@@ -594,6 +643,9 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     synthFrom: opts.from ?? undefined,
     synthTo: opts.to ?? undefined,
     synthBypassDreamGuard: opts.bypassDreamGuard,
+    proposeInclude: opts.proposeInclude,
+    proposeExclude: opts.proposeExclude,
+    proposeLimit: opts.proposeLimit ?? undefined,
   });
 
   if (opts.json) {
