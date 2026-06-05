@@ -57,7 +57,13 @@ function buildMockEngine(opts: {
         if (existing.has(key)) return [{ id: 1 } as unknown as T];
         return [];
       }
-      // INSERT — return nothing
+      if (sql.includes('INSERT INTO take_proposals')) {
+        const [sourceId, slug, ch, pv] = params ?? [];
+        const key = `${sourceId}|${slug}|${ch}|${pv}`;
+        if (existing.has(key)) return [];
+        existing.add(key);
+        return [{ id: existing.size } as unknown as T];
+      }
       return [];
     },
   } as unknown as BrainEngine;
@@ -383,5 +389,20 @@ New prose appended here.`;
     expect(runIdA).toBe(runIdB);
     expect(typeof runIdA).toBe('string');
     expect((runIdA as string).startsWith('propose-')).toBe(true);
+  });
+
+  test('counts only rows actually inserted when same page yields multiple proposals', async () => {
+    const pages = [buildPage({ slug: 'wiki/multi', body: 'page with several candidate claims' })];
+    const { engine, captured } = buildMockEngine({ pages });
+    const extractor: ProposeTakesExtractor = async () => [
+      { claim_text: 'first candidate claim', kind: 'take', holder: 'brain', weight: 0.5 },
+      { claim_text: 'second candidate claim', kind: 'take', holder: 'brain', weight: 0.6 },
+      { claim_text: 'third candidate claim', kind: 'take', holder: 'brain', weight: 0.7 },
+    ];
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    const details = result.details as Record<string, unknown>;
+    expect(details.proposals_inserted).toBe(1);
+    expect(captured.filter(c => c.sql.includes('INSERT INTO take_proposals'))).toHaveLength(3);
   });
 });
