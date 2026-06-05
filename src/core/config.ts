@@ -759,6 +759,13 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'emotional_weight.user_holder',
   // Cycle phase config
   'cycle.grade_takes.write_gstack_learnings',
+  'cycle.conversation_facts_backfill.enabled',
+  'cycle.conversation_facts_backfill.max_cost_usd',
+  'cycle.conversation_facts_backfill.max_total_cost_usd',
+  'cycle.conversation_facts_backfill.max_walltime_min',
+  'cycle.conversation_facts_backfill.max_total_walltime_min',
+  'cycle.conversation_facts_backfill.types',
+  'cycle.conversation_facts_backfill.workers',
   // Content sanity (v0.41)
   'content_sanity.bytes_warn',
   'content_sanity.bytes_block',
