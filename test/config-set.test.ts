@@ -91,6 +91,15 @@ describe('KNOWN_CONFIG_KEYS', () => {
   test('contains orphan-reporting override keys', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('orphans.exclude_prefixes');
     expect(KNOWN_CONFIG_KEYS).toContain('orphans.exclude_slugs');
+
+  test('contains conversation facts backfill cycle keys', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('cycle.conversation_facts_backfill.enabled');
+    expect(KNOWN_CONFIG_KEYS).toContain('cycle.conversation_facts_backfill.max_cost_usd');
+    expect(KNOWN_CONFIG_KEYS).toContain('cycle.conversation_facts_backfill.max_total_cost_usd');
+    expect(KNOWN_CONFIG_KEYS).toContain('cycle.conversation_facts_backfill.max_walltime_min');
+    expect(KNOWN_CONFIG_KEYS).toContain('cycle.conversation_facts_backfill.max_total_walltime_min');
+    expect(KNOWN_CONFIG_KEYS).toContain('cycle.conversation_facts_backfill.types');
+    expect(KNOWN_CONFIG_KEYS).toContain('cycle.conversation_facts_backfill.workers');
   });
 
   test('no duplicate entries', () => {
