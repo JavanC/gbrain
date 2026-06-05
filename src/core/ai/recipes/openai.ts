@@ -25,19 +25,19 @@ export const openai: Recipe = {
       max_batch_tokens: 100_000,
     },
     expansion: {
-      models: ['gpt-5.2', 'gpt-4o-mini'],
+      models: ['gpt-5.5', 'gpt-5.2', 'gpt-4o-mini'],
       cost_per_1m_tokens_usd: 0.15,
-      price_last_verified: '2026-04-20',
+      price_last_verified: '2026-06-05',
     },
     chat: {
-      models: ['gpt-5.2', 'gpt-4o-mini'],
+      models: ['gpt-5.5', 'gpt-5.2', 'gpt-4o-mini'],
       supports_tools: true,
       supports_subagent_loop: true,
       supports_prompt_cache: false,
-      max_context_tokens: 200000,
-      cost_per_1m_input_usd: 1.25, // gpt-5.2 baseline
-      cost_per_1m_output_usd: 10.0,
-      price_last_verified: '2026-04-20',
+      max_context_tokens: 1050000,
+      cost_per_1m_input_usd: 4.0, // gpt-5.5 baseline
+      cost_per_1m_output_usd: 16.0,
+      price_last_verified: '2026-06-05',
     },
   },
   setup_hint: 'Get an API key at https://platform.openai.com/api-keys, then `export OPENAI_API_KEY=...`',
