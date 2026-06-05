@@ -53,6 +53,16 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('zeroentropy_api_key');
   });
 
+  test('contains conversation facts backfill cycle keys', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('cycle.conversation_facts_backfill.enabled');
+    expect(KNOWN_CONFIG_KEYS).toContain('cycle.conversation_facts_backfill.max_cost_usd');
+    expect(KNOWN_CONFIG_KEYS).toContain('cycle.conversation_facts_backfill.max_total_cost_usd');
+    expect(KNOWN_CONFIG_KEYS).toContain('cycle.conversation_facts_backfill.max_walltime_min');
+    expect(KNOWN_CONFIG_KEYS).toContain('cycle.conversation_facts_backfill.max_total_walltime_min');
+    expect(KNOWN_CONFIG_KEYS).toContain('cycle.conversation_facts_backfill.types');
+    expect(KNOWN_CONFIG_KEYS).toContain('cycle.conversation_facts_backfill.workers');
+  });
+
   test('no duplicate entries', () => {
     const set = new Set(KNOWN_CONFIG_KEYS);
     expect(set.size).toBe(KNOWN_CONFIG_KEYS.length);
