@@ -9,7 +9,7 @@
  *                               per-task overrides, alias map, and source-of-truth
  *                               column (default / config / env).
  *
- *   `gbrain models doctor`    — opt-in probe. Fires a 1-token `gateway.chat()`
+ *   `gbrain models doctor`    — opt-in probe. Fires a minimal `gateway.chat()`
  *                               call against each configured chat / expansion
  *                               model and reports reachability with the
  *                               provider's error string. Catches the bug class
@@ -23,7 +23,7 @@
  *                               (e.g. cost-sensitive operators with rate limits)
  *
  * Per Codex F11 in plan review: no specific dollar cost claim. Probe uses
- * `max_tokens: 1` against each configured model; actual cost depends on
+ * a tiny output cap against each configured model; actual cost depends on
  * provider billing minimums.
  */
 
@@ -514,7 +514,7 @@ async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansion'): P
       await chat({
         model: modelStr,
         messages: [{ role: 'user', content: '.' }],
-        maxTokens: 1,
+        maxTokens: 16,
         abortSignal: controller.signal,
       });
       return { model: modelStr, touchpoint, status: 'ok', message: 'reachable', elapsed_ms: Date.now() - start };
@@ -536,13 +536,13 @@ function shouldSkipProvider(modelStr: string, skip: string[]): boolean {
 
 export async function runModels(engine: BrainEngine, args: string[]): Promise<void> {
   const json = args.includes('--json');
-  const sub = args[1] === 'doctor' ? 'doctor' : args[1] === 'help' || args.includes('--help') || args.includes('-h') ? 'help' : 'read';
+  const sub = args[0] === 'doctor' ? 'doctor' : args[0] === 'help' || args.includes('--help') || args.includes('-h') ? 'help' : 'read';
 
   if (sub === 'help') {
     process.stdout.write(
 `Usage:
   gbrain models                   Show routing table (read-only)
-  gbrain models doctor [flags]    Probe each configured model (~1 token each)
+  gbrain models doctor [flags]    Probe each configured model with a tiny request
   gbrain models --json            Machine-readable output
 
 Flags (doctor only):
