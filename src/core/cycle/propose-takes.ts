@@ -145,6 +145,10 @@ export interface ProposeTakesOpts extends BasePhaseOpts {
   model?: string;
   /** Skip pages that already have a complete takes fence. Default: true. */
   skipPagesWithFence?: boolean;
+  /** Include only page slugs matching at least one glob. Empty = all. */
+  includeSlugs?: string[];
+  /** Exclude page slugs matching any glob. */
+  excludeSlugs?: string[];
 }
 
 export interface ProposeTakesResult {
@@ -152,8 +156,50 @@ export interface ProposeTakesResult {
   cache_hits: number;
   cache_misses: number;
   proposals_inserted: number;
+  pages_skipped_scope: number;
+  pages_skipped_empty: number;
+  pages_skipped_fence: number;
   budget_exhausted: boolean;
   warnings: string[];
+}
+
+function slugGlobToRegex(pattern: string): RegExp {
+  let regex = '^';
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === '*') {
+      const next = pattern[i + 1];
+      if (next === '*') {
+        if (pattern[i + 2] === '/') {
+          regex += '(?:.*/)?';
+          i += 2;
+        } else {
+          regex += '.*';
+          i++;
+        }
+      } else {
+        regex += '[^/]*';
+      }
+      continue;
+    }
+    if (ch === '?') { regex += '[^/]'; continue; }
+    if ('\\.[]{}()+-^$|'.includes(ch)) { regex += `\\${ch}`; continue; }
+    regex += ch;
+  }
+  regex += '$';
+  return new RegExp(regex);
+}
+
+function matchesAnySlugGlob(slug: string, patterns?: string[]): boolean {
+  if (!patterns || patterns.length === 0) return false;
+  const normalized = slug.replace(/\\/g, '/');
+  return patterns.some((pattern) => slugGlobToRegex(pattern).test(normalized));
+}
+
+function isSlugIncluded(slug: string, include?: string[], exclude?: string[]): boolean {
+  if (include && include.length > 0 && !matchesAnySlugGlob(slug, include)) return false;
+  if (matchesAnySlugGlob(slug, exclude)) return false;
+  return true;
 }
 
 /**
@@ -314,6 +360,9 @@ class ProposeTakesPhase extends BaseCyclePhase {
       cache_hits: 0,
       cache_misses: 0,
       proposals_inserted: 0,
+      pages_skipped_scope: 0,
+      pages_skipped_empty: 0,
+      pages_skipped_fence: 0,
       budget_exhausted: false,
       warnings: [],
     };
@@ -336,10 +385,21 @@ class ProposeTakesPhase extends BaseCyclePhase {
       result.pages_scanned += 1;
       this.tick(opts);
 
+      if (!isSlugIncluded(page.slug, opts.includeSlugs, opts.excludeSlugs)) {
+        result.pages_skipped_scope += 1;
+        continue;
+      }
+
       // Skip pages that have NO prose body (e.g. metadata-only entity stubs).
       const body = page.compiled_truth ?? '';
-      if (body.trim().length === 0) continue;
-      if (skipPagesWithFence && hasCompleteFence(body)) continue;
+      if (body.trim().length === 0) {
+        result.pages_skipped_empty += 1;
+        continue;
+      }
+      if (skipPagesWithFence && hasCompleteFence(body)) {
+        result.pages_skipped_fence += 1;
+        continue;
+      }
 
       const ch = contentHash(body);
       const existingTakes = extractExistingTakesForDedup(body);
@@ -449,7 +509,10 @@ class ProposeTakesPhase extends BaseCyclePhase {
     });
 
     return {
-      summary: `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals (run ${proposalRunId})`,
+      summary:
+        `propose_takes: scanned ${result.pages_scanned} pages, ` +
+        `${result.pages_skipped_scope} scope-skipped, ${result.cache_hits} cached, ` +
+        `${result.proposals_inserted} new proposals (run ${proposalRunId})`,
       details: { ...result, proposal_run_id: proposalRunId, prompt_version: promptVersion },
       status: result.budget_exhausted ? 'warn' : 'ok',
     };

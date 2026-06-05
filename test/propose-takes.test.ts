@@ -356,6 +356,50 @@ New prose appended here.`;
     expect(extractorCalls).toBe(1);
   });
 
+  test('includeSlugs restricts proposal extraction to matching slugs', async () => {
+    const pages = [
+      buildPage({ slug: 'projects/valuable-page', body: 'project prose' }),
+      buildPage({ slug: 'writing/navigation-map', body: 'map prose' }),
+    ];
+    const { engine } = buildMockEngine({ pages });
+    const seen: string[] = [];
+    const extractor: ProposeTakesExtractor = async ({ pagePath }) => {
+      seen.push(pagePath);
+      return [{ claim_text: `${pagePath} claim`, kind: 'take', holder: 'brain', weight: 0.5 }];
+    };
+    const result = await runPhaseProposeTakes(buildCtx(engine), {
+      extractor,
+      includeSlugs: ['projects/**'],
+    });
+
+    expect(seen).toEqual(['projects/valuable-page']);
+    const details = result.details as Record<string, unknown>;
+    expect(details.pages_skipped_scope).toBe(1);
+    expect(details.proposals_inserted).toBe(1);
+  });
+
+  test('excludeSlugs prevents generated or receipt pages from being scanned', async () => {
+    const pages = [
+      buildPage({ slug: 'projects/valuable-page', body: 'project prose' }),
+      buildPage({ slug: 'extracts/2026-06-06/takes-proposed', body: 'receipt prose' }),
+    ];
+    const { engine } = buildMockEngine({ pages });
+    const seen: string[] = [];
+    const extractor: ProposeTakesExtractor = async ({ pagePath }) => {
+      seen.push(pagePath);
+      return [{ claim_text: `${pagePath} claim`, kind: 'take', holder: 'brain', weight: 0.5 }];
+    };
+    const result = await runPhaseProposeTakes(buildCtx(engine), {
+      extractor,
+      excludeSlugs: ['extracts/**'],
+    });
+
+    expect(seen).toEqual(['projects/valuable-page']);
+    const details = result.details as Record<string, unknown>;
+    expect(details.pages_skipped_scope).toBe(1);
+    expect(details.proposals_inserted).toBe(1);
+  });
+
   test('skipPagesWithFence:true bypasses pages that already have a complete fence', async () => {
     const pages = [
       buildPage({
