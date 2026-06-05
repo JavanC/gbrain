@@ -850,6 +850,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'models.expansion',
   'models.chat',
   'models.eval.longmemeval',
+  'facts.extraction_enabled',
   'facts.extraction_model',
   // Dream cycle config
   'dream.synthesize.session_corpus_dir',
