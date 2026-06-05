@@ -390,12 +390,13 @@ class ProposeTakesPhase extends BaseCyclePhase {
       // because the composite idempotency key is on the per-page tuple — a
       // bulk UPSERT would collapse a same-page-multi-claim run into one row.
       for (const p of proposals) {
-        await engine.executeRaw(
+        const inserted = await engine.executeRaw<{ id: number }>(
           `INSERT INTO take_proposals
              (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
               claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-           ON CONFLICT (source_id, page_slug, content_hash, prompt_version) DO NOTHING`,
+           ON CONFLICT (source_id, page_slug, content_hash, prompt_version) DO NOTHING
+           RETURNING id`,
           [
             sourceId,
             page.slug,
@@ -411,7 +412,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
             opts.model ?? 'claude-sonnet-4-6',
           ],
         );
-        result.proposals_inserted += 1;
+        if (inserted.length > 0) result.proposals_inserted += 1;
       }
     }
 
