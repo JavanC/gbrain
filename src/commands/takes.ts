@@ -105,6 +105,44 @@ function writeBody(path: string, body: string): void {
   writeFileSync(path, body, 'utf-8');
 }
 
+type TakeProposalStatus = 'pending' | 'accepted' | 'rejected' | 'superseded';
+
+interface TakeProposalReviewRow {
+  id: number | string;
+  source_id: string;
+  page_slug: string;
+  proposed_at: string | Date;
+  proposal_run_id: string;
+  status: TakeProposalStatus;
+  claim_text: string;
+  kind: string;
+  holder: string;
+  weight: number | string;
+  domain: string | null;
+  model_id: string;
+  predicted_brier: number | string | null;
+  predicted_brier_bucket_n: number | string | null;
+}
+
+function ensureProposalStatus(raw: string | undefined): TakeProposalStatus {
+  const status = raw ?? 'pending';
+  if (status === 'pending' || status === 'accepted' || status === 'rejected' || status === 'superseded') {
+    return status;
+  }
+  console.error(`Invalid --status "${status}". Expected: pending, accepted, rejected, superseded.`);
+  process.exit(1);
+}
+
+function ensurePositiveInt(raw: string | undefined, fallback: number, label: string): number {
+  if (raw === undefined) return fallback;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0 || String(n) !== raw.trim()) {
+    console.error(`Invalid ${label} "${raw}". Expected a positive integer.`);
+    process.exit(1);
+  }
+  return n;
+}
+
 // --- Subcommands ---
 
 async function cmdList(engine: BrainEngine, args: string[]): Promise<void> {
@@ -166,6 +204,74 @@ async function cmdSearch(engine: BrainEngine, args: string[]): Promise<void> {
   for (const h of hits) {
     const score = Number(h.score).toFixed(2);
     console.log(`${h.page_slug}#${h.row_num} [${h.kind} • ${h.holder} • w=${Number(h.weight).toFixed(2)} • s=${score}]\n  ${h.claim}\n`);
+  }
+}
+
+async function cmdProposals(engine: BrainEngine, args: string[]): Promise<void> {
+  const json = flagPresent(args, '--json');
+  const status = ensureProposalStatus(flagValue(args, '--status'));
+  const sourceId = flagValue(args, '--source-id') ?? flagValue(args, '--source');
+  const pageSlug = flagValue(args, '--page') ?? flagValue(args, '--slug');
+  const runId = flagValue(args, '--run-id') ?? flagValue(args, '--run');
+  const holder = flagValue(args, '--who') ?? flagValue(args, '--holder');
+  const kind = flagValue(args, '--kind');
+  const limit = Math.min(ensurePositiveInt(flagValue(args, '--limit'), 50, '--limit'), 500);
+
+  const where = ['status = $1'];
+  const params: unknown[] = [status];
+  const addFilter = (sql: string, value: unknown) => {
+    params.push(value);
+    where.push(sql.replace('?', `$${params.length}`));
+  };
+  if (sourceId) addFilter('source_id = ?', sourceId);
+  if (pageSlug) addFilter('page_slug = ?', pageSlug);
+  if (runId) addFilter('proposal_run_id = ?', runId);
+  if (holder) addFilter('holder = ?', holder);
+  if (kind) addFilter('kind = ?', kind);
+  params.push(limit);
+
+  const rows = await engine.executeRaw<TakeProposalReviewRow>(
+    `SELECT id, source_id, page_slug, proposed_at, proposal_run_id, status,
+            claim_text, kind, holder, weight, domain, model_id,
+            predicted_brier, predicted_brier_bucket_n
+       FROM take_proposals
+      WHERE ${where.join(' AND ')}
+      ORDER BY proposed_at DESC, id DESC
+      LIMIT $${params.length}`,
+    params,
+  );
+
+  const filters = { status, source_id: sourceId ?? null, page_slug: pageSlug ?? null, run_id: runId ?? null, holder: holder ?? null, kind: kind ?? null, limit };
+  if (json) {
+    console.log(JSON.stringify({ filters, count: rows.length, proposals: rows }, null, 2));
+    return;
+  }
+
+  const scope = [
+    `status=${status}`,
+    sourceId ? `source=${sourceId}` : null,
+    pageSlug ? `page=${pageSlug}` : null,
+    runId ? `run=${runId}` : null,
+    holder ? `holder=${holder}` : null,
+    kind ? `kind=${kind}` : null,
+  ].filter(Boolean).join(' ');
+  if (rows.length === 0) {
+    console.log(`No take proposals found (${scope}).`);
+    return;
+  }
+
+  console.log(`# Take proposals (${scope})\n`);
+  for (const row of rows) {
+    const weight = Number(row.weight).toFixed(2);
+    const domain = row.domain ? ` • domain=${row.domain}` : '';
+    const brier = row.predicted_brier === null || row.predicted_brier === undefined
+      ? ''
+      : ` • predicted_brier=${Number(row.predicted_brier).toFixed(3)}`;
+    console.log(
+      `#${row.id} ${row.page_slug} [${row.kind} • ${row.holder} • w=${weight}${domain}${brier}]\n` +
+      `  ${row.claim_text}\n` +
+      `  run=${row.proposal_run_id} • model=${row.model_id} • proposed_at=${new Date(row.proposed_at).toISOString()}\n`,
+    );
   }
 }
 
@@ -536,6 +642,11 @@ Subcommands:
                                           List takes for a page
   takes search "<query>" [--limit N] [--json]
                                           Keyword search across all takes
+  takes proposals [--status pending] [--source-id ID] [--page slug] [--run-id ID]
+                  [--who holder] [--kind k] [--limit N] [--json]
+                                          Review take_proposals queue without writing
+  takes propose --review [same flags as proposals]
+                                          Alias for takes proposals
   takes add <slug> --claim "..." --kind <fact|take|bet|hunch> --who <holder>
                    [--weight 0.5] [--source "..."] [--since YYYY-MM]
                                           Append a take (markdown + DB)
@@ -564,6 +675,11 @@ Common flags:
 
   switch (sub) {
     case 'search':      return cmdSearch(engine, rest);
+    case 'proposals':   return cmdProposals(engine, rest);
+    case 'propose':
+      if (rest.includes('--review')) return cmdProposals(engine, rest.filter(a => a !== '--review'));
+      console.error('Usage: gbrain takes propose --review [same flags as proposals]');
+      process.exit(1);
     case 'add':         return cmdAdd(engine, rest);
     case 'update':      return cmdUpdate(engine, rest);
     case 'supersede':   return cmdSupersede(engine, rest);
