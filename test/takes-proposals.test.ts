@@ -62,7 +62,22 @@ describe('gbrain takes proposals', () => {
 
   test('supports propose --review alias with scoped filters and json output', async () => {
     const captured: CapturedQuery[] = [];
-    const engine = buildEngine([], captured);
+    const engine = buildEngine([{
+      id: BigInt(7),
+      source_id: 'javan-brain',
+      page_slug: 'projects/example',
+      proposed_at: '2026-06-06T01:02:03.000Z',
+      proposal_run_id: 'propose-run',
+      status: 'rejected',
+      claim_text: 'Rejected proposal.',
+      kind: 'take',
+      holder: 'brain',
+      weight: 0.5,
+      domain: null,
+      model_id: 'openai:gpt-5.5',
+      predicted_brier: null,
+      predicted_brier_bucket_n: null,
+    }], captured);
 
     const out = await captureStdout(() => runTakes(engine, [
       'propose',
@@ -85,7 +100,8 @@ describe('gbrain takes proposals', () => {
     ]));
 
     const parsed = JSON.parse(out) as { filters: Record<string, unknown>; count: number; proposals: unknown[] };
-    expect(parsed.count).toBe(0);
+    expect(parsed.count).toBe(1);
+    expect((parsed.proposals[0] as Record<string, unknown>).id).toBe('7');
     expect(parsed.filters).toMatchObject({
       status: 'rejected',
       source_id: 'javan-brain',

@@ -48,6 +48,7 @@ interface CapturedSql {
 function buildMockEngine(opts: {
   pages: Page[];
   existingProposals?: Set<string>; // composite-key strings already in take_proposals
+  config?: Record<string, string>;
 }): { engine: BrainEngine; captured: CapturedSql[] } {
   const captured: CapturedSql[] = [];
   const existing = opts.existingProposals ?? new Set<string>();
@@ -56,6 +57,9 @@ function buildMockEngine(opts: {
     kind: 'pglite',
     async listPages() {
       return opts.pages;
+    },
+    async getConfig(key: string) {
+      return opts.config?.[key] ?? null;
     },
     async executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> {
       captured.push({ sql, params: params ?? [] });
@@ -372,6 +376,25 @@ describe('runPhaseProposeTakes — phase integration', () => {
     expect(inserts).toHaveLength(2);
     for (const insert of inserts) expect(insert.sql).toContain('md5(claim_text)');
     expect(inserts.map(i => i.params[5])).toEqual(['Claim one', 'Claim two']);
+  });
+
+  test('uses models.dream.propose_takes config for extractor and model_id', async () => {
+    const pages = [buildPage({ slug: 'projects/model-route', body: 'Use phase-local model routing for proposal extraction.' })];
+    const { engine, captured } = buildMockEngine({
+      pages,
+      config: { 'models.dream.propose_takes': 'openai:gpt-5.5' },
+    });
+    let seenModelHint: string | undefined;
+    const extractor: ProposeTakesExtractor = async ({ modelHint }) => {
+      seenModelHint = modelHint;
+      return [{ claim_text: 'Proposal extraction should use phase-local routing', kind: 'take', holder: 'brain', weight: 0.65 }];
+    };
+
+    await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    expect(seenModelHint).toBe('openai:gpt-5.5');
+    const insert = captured.find(c => c.sql.includes('INSERT INTO take_proposals'));
+    expect(insert?.params[11]).toBe('openai:gpt-5.5');
   });
 
   test('cache hit: page already in take_proposals is skipped', async () => {
