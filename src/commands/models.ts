@@ -102,6 +102,7 @@ const PER_TASK_KEYS: PerTaskModelRoute[] = [
     description: 'Atom extraction from transcripts/pages (extract_atoms phase)',
     narrowResolver: resolveExtractAtomsModelWithSource,
   },
+  { key: 'models.dream.propose_takes',       tier: 'reasoning', description: 'Take proposal extraction queue' },
   { key: 'models.drift',                    tier: 'reasoning', description: 'Drift LLM judge (v0.29 scaffold)' },
   { key: 'models.standing_questions',       tier: 'deep',      description: 'Pinned-question answers (standing_questions phase, questions_pin/refresh)' },
   { key: 'models.think',                    tier: 'deep',      description: '`gbrain think` synthesis op' },
