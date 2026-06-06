@@ -3419,7 +3419,7 @@ export const MIGRATIONS: Migration[] = [
         proposed_at                 TIMESTAMPTZ  NOT NULL DEFAULT now(),
         proposal_run_id             TEXT         NOT NULL,
         status                      TEXT         NOT NULL DEFAULT 'pending'
-                                                 CHECK (status IN ('pending','accepted','rejected','superseded')),
+                                                 CHECK (status IN ('pending','accepted','rejected','superseded','empty')),
         claim_text                  TEXT         NOT NULL,
         kind                        TEXT         NOT NULL,
         holder                      TEXT         NOT NULL,
@@ -5127,29 +5127,9 @@ export const MIGRATIONS: Migration[] = [
   {
     version: 114,
     name: 'links_link_source_check_kebab_regex',
-    // Issue #1941: open link_source from a closed allowlist to a kebab-case
-    // format gate so external derivers (e.g. 'citation-graph') stamp their own
-    // provenance without a per-deriver gbrain migration. Format: lowercase
-    // kebab `^[a-z][a-z0-9]*(-[a-z0-9]+)*$` (rejects UPPER, leading digit/dash,
-    // trailing/double dash, underscore, space) + char_length <= 64 cap on the
-    // indexed free-text column. The five prior built-ins all satisfy the regex,
-    // so existing rows pass `VALIDATE` and the constraint swap never fails.
-    //
-    // DELIBERATELY diverges from the v95/v113 plain DROP+ADD pattern: on real
-    // Postgres a plain `ADD CONSTRAINT ... CHECK` takes ACCESS EXCLUSIVE + a
-    // full-table validation scan, which can stall writes on a large `links`
-    // table. The postgres branch instead does `ADD ... NOT VALID` (instant,
-    // no scan) then `VALIDATE CONSTRAINT` (scans under SHARE UPDATE EXCLUSIVE,
-    // does not block reads/writes). That two-phase form requires running
-    // OUTSIDE a transaction → `transaction: false`. PGLite (single-writer WASM,
-    // no lock concern) keeps the plain one-shot DROP+ADD, and is the branch the
-    // schema-version hash reads (pglite-engine.ts).
-    //
-    // Idempotent via DROP ... IF EXISTS; no-ops on installs that never created
-    // the constraint and safe to re-run.
     idempotent: true,
     transaction: false,
-    sql: '', // engine-specific via sqlFor (postgres two-phase vs pglite one-shot)
+    sql: '',
     sqlFor: {
       postgres: `
         ALTER TABLE links DROP CONSTRAINT IF EXISTS links_link_source_check;
@@ -5167,16 +5147,6 @@ export const MIGRATIONS: Migration[] = [
   {
     version: 115,
     name: 'op_checkpoint_paths_append_table',
-    // #1794 cathedral: append-only delta storage for op checkpoints. The parent
-    // op_checkpoints.completed_keys JSONB was rewritten in full on every flush —
-    // O(N^2) write bytes over a 204K-file sync. This child table banks one row
-    // per completed path; sync's appendCompleted INSERTs only the delta. The FK
-    // ON DELETE CASCADE makes clearOpCheckpoint + the 7-day purge drop children
-    // automatically. Created empty so the composite-PK index build is instant;
-    // no CONCURRENTLY / transaction:false needed (mirrors v75 op_checkpoints).
-    // The PK (op,fingerprint,path) btree's (op,fingerprint) prefix serves every
-    // read/delete, so no separate index. Keep in sync with src/schema.sql,
-    // src/core/pglite-schema.ts, src/core/schema-embedded.ts.
     idempotent: true,
     sql: `
       CREATE TABLE IF NOT EXISTS op_checkpoint_paths (
@@ -5234,6 +5204,10 @@ export const MIGRATIONS: Migration[] = [
 
       CREATE INDEX IF NOT EXISTS idx_code_edges_chunk_from_symbol
         ON code_edges_chunk (from_symbol_qualified);
+
+      ALTER TABLE take_proposals DROP CONSTRAINT IF EXISTS take_proposals_status_check;
+      ALTER TABLE take_proposals ADD CONSTRAINT take_proposals_status_check
+        CHECK (status IN ('pending','accepted','rejected','superseded','empty'));
     `,
   },
   {

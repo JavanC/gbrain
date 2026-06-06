@@ -375,9 +375,15 @@ class ProposeTakesPhase extends BaseCyclePhase {
     };
 
     // Load pages eligible for proposal. Source-scoped per BaseCyclePhase.
+    // When include/exclude scope filters are active, fetch all pages so the
+    // JS-layer slug filter sees the full set (default limit=100 would cut off
+    // eligible pages scattered beyond the first 100 by updated_at order).
+    const hasSlugScope = (opts.includeSlugs && opts.includeSlugs.length > 0) ||
+                         (opts.excludeSlugs && opts.excludeSlugs.length > 0);
     const pageFilters: PageFilters = {
       ...scope,
       sort: 'updated_desc',
+      ...(hasSlugScope ? { limit: 100_000 } : {}),
     };
     const pages: Page[] = await engine.listPages(pageFilters);
 
@@ -452,6 +458,19 @@ class ProposeTakesPhase extends BaseCyclePhase {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         result.warnings.push(`extractor failed on ${page.slug}: ${msg}`);
+        continue;
+      }
+
+      // Cache 0-result pages so they don't re-spend LLM tokens on unchanged content.
+      if (proposals.length === 0) {
+        await engine.executeRaw(
+          `INSERT INTO take_proposals
+             (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
+              claim_text, kind, holder, weight, model_id, status)
+           VALUES ($1, $2, $3, $4, $5, '(no proposals extracted)', 'empty', 'system', 0, $6, 'empty')
+           ON CONFLICT (source_id, page_slug, content_hash, prompt_version) DO NOTHING`,
+          [sourceId, page.slug, ch, promptVersion, proposalRunId, resolvedModel],
+        );
         continue;
       }
 

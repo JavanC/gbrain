@@ -318,6 +318,21 @@ describe('runPhaseProposeTakes — phase integration', () => {
     expect(captured.filter(c => c.sql.includes('INSERT INTO take_proposals'))).toHaveLength(0);
   });
 
+  test('0-result pages write an empty sentinel for cache', async () => {
+    const pages = [buildPage({ slug: 'projects/quiet-page', body: 'Prose with no gradeable claims.' })];
+    const { engine, captured } = buildMockEngine({ pages });
+    const extractor: ProposeTakesExtractor = async () => [];
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    const details = result.details as Record<string, unknown>;
+    expect(details.cache_misses).toBe(1);
+    expect(details.proposals_inserted).toBe(0);
+    const inserts = captured.filter(c => c.sql.includes('INSERT INTO take_proposals'));
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0].params).toContain('projects/quiet-page');
+    expect(inserts[0].sql).toContain("'empty'");
+  });
+
   test('passes existing fence rows to extractor as dedup context (F2 fix)', async () => {
     const body = `# Page
 
