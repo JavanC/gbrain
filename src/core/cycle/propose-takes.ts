@@ -377,7 +377,6 @@ class ProposeTakesPhase extends BaseCyclePhase {
     // Load pages eligible for proposal. Source-scoped per BaseCyclePhase.
     const pageFilters: PageFilters = {
       ...scope,
-      limit: pageLimit,
       sort: 'updated_desc',
     };
     const pages: Page[] = await engine.listPages(pageFilters);
@@ -387,6 +386,9 @@ class ProposeTakesPhase extends BaseCyclePhase {
     }
 
     for (const page of pages) {
+      const processed = result.cache_hits + result.cache_misses;
+      if (processed >= pageLimit) break;
+
       result.pages_scanned += 1;
       this.tick(opts);
 
