@@ -304,12 +304,8 @@ async function cmdProposals(engine: BrainEngine, args: string[]): Promise<void> 
   }
 }
 
-async function cmdProposeAcceptDryRun(engine: BrainEngine, args: string[]): Promise<void> {
+async function cmdProposeAccept(engine: BrainEngine, args: string[]): Promise<void> {
   const dryRun = flagPresent(args, '--dry-run');
-  if (!dryRun) {
-    console.error('accept/promote is preview-only in this version. Pass --dry-run to inspect the markdown changes first.');
-    process.exit(2);
-  }
   const json = flagPresent(args, '--json');
   const ids = parseProposalIds(flagValue(args, '--accept'));
   const dirArg = flagValue(args, '--dir');
@@ -373,30 +369,106 @@ async function cmdProposeAcceptDryRun(engine: BrainEngine, args: string[]): Prom
     });
   }
 
-  const result = {
-    dry_run: true,
-    requested_ids: ids,
-    missing_ids: missingIds,
-    skipped,
-    changes: previews,
-  };
-  if (json) {
-    console.log(stringifyJson(result));
+  if (dryRun) {
+    const result = {
+      dry_run: true,
+      requested_ids: ids,
+      missing_ids: missingIds,
+      skipped,
+      changes: previews,
+    };
+    if (json) {
+      console.log(stringifyJson(result));
+      return;
+    }
+    if (previews.length === 0) {
+      console.log(`No pending proposals would be promoted (${ids.length} requested).`);
+    } else {
+      console.log(`# Take proposal accept preview (${previews.length} change${previews.length === 1 ? '' : 's'})\n`);
+      for (const p of previews) {
+        console.log(
+          `${p.page_slug}#${p.row_num} <= proposal #${p.id}\n` +
+          `  [${p.kind} • ${p.holder} • w=${p.weight.toFixed(2)}]\n` +
+          `  ${p.claim}\n` +
+          `  source=${p.source}\n`,
+        );
+      }
+    }
+    if (missingIds.length > 0) console.log(`Missing proposal ids: ${missingIds.join(', ')}`);
+    if (skipped.length > 0) {
+      console.log(`Skipped: ${skipped.map(s => `#${s.id}(${s.status})`).join(', ')}`);
+    }
     return;
   }
 
+  // --- Write path: promote pending proposals into ## Takes ---
   if (previews.length === 0) {
-    console.log(`No pending proposals would be promoted (${ids.length} requested).`);
-  } else {
-    console.log(`# Take proposal accept preview (${previews.length} change${previews.length === 1 ? '' : 's'})\n`);
-    for (const p of previews) {
-      console.log(
-        `${p.page_slug}#${p.row_num} <= proposal #${p.id}\n` +
-        `  [${p.kind} • ${p.holder} • w=${p.weight.toFixed(2)}]\n` +
-        `  ${p.claim}\n` +
-        `  source=${p.source}\n`,
-      );
+    if (json) {
+      console.log(stringifyJson({ dry_run: false, requested_ids: ids, missing_ids: missingIds, skipped, promoted: [] }));
+    } else {
+      console.log(`No pending proposals to promote (${ids.length} requested).`);
+      if (missingIds.length > 0) console.log(`Missing proposal ids: ${missingIds.join(', ')}`);
+      if (skipped.length > 0) console.log(`Skipped: ${skipped.map(s => `#${s.id}(${s.status})`).join(', ')}`);
     }
+    return;
+  }
+
+  const promoted: typeof previews = [];
+  const bySlug = new Map<string, typeof previews>();
+  for (const p of previews) {
+    const arr = bySlug.get(p.page_slug) ?? [];
+    arr.push(p);
+    bySlug.set(p.page_slug, arr);
+  }
+
+  for (const [slug, proposals] of bySlug) {
+    await withPageLock(slug, async () => {
+      const path = pageFilePath(brainDir, slug);
+      let body = readBodyOrEmpty(path);
+
+      for (const p of proposals) {
+        const { body: nextBody, rowNum } = upsertTakeRow(body, {
+          claim: p.claim,
+          kind: p.kind,
+          holder: p.holder,
+          weight: p.weight,
+          source: p.source,
+          active: true,
+        });
+        body = nextBody;
+        p.row_num = rowNum;
+
+        const pageId = await getPageId(engine, slug);
+        await engine.addTakesBatch([{
+          page_id: pageId, row_num: rowNum, claim: p.claim, kind: p.kind,
+          holder: p.holder, weight: p.weight, source: p.source, active: true,
+          since_date: undefined, superseded_by: null,
+        }]);
+
+        await engine.executeRaw(
+          `UPDATE take_proposals
+              SET status = 'accepted', acted_at = now(), acted_by = 'cli', promoted_row_num = $2
+            WHERE id = $1`,
+          [p.id, rowNum],
+        );
+        promoted.push(p);
+      }
+
+      writeBody(path, body);
+    });
+  }
+
+  if (json) {
+    console.log(stringifyJson({ dry_run: false, requested_ids: ids, missing_ids: missingIds, skipped, promoted }));
+    return;
+  }
+  console.log(`# Promoted ${promoted.length} proposal${promoted.length === 1 ? '' : 's'}\n`);
+  for (const p of promoted) {
+    console.log(
+      `${p.page_slug}#${p.row_num} <= proposal #${p.id}\n` +
+      `  [${p.kind} • ${p.holder} • w=${p.weight.toFixed(2)}]\n` +
+      `  ${p.claim}\n`,
+    );
   }
   if (missingIds.length > 0) console.log(`Missing proposal ids: ${missingIds.join(', ')}`);
   if (skipped.length > 0) {
@@ -776,8 +848,9 @@ Subcommands:
                                           Review take_proposals queue without writing
   takes propose --review [same flags as proposals]
                                           Alias for takes proposals
-  takes propose --accept <id[,id...]> --dry-run [--dir <path>] [--json]
-                                          Preview promoting pending proposals into ## Takes
+  takes propose --accept <id[,id...]> [--dry-run] [--dir <path>] [--json]
+                                          Promote pending proposals into ## Takes (markdown + DB)
+                                          --dry-run previews without writing
   takes add <slug> --claim "..." --kind <fact|take|bet|hunch> --who <holder>
                    [--weight 0.5] [--source "..."] [--since YYYY-MM]
                                           Append a take (markdown + DB)
@@ -809,7 +882,7 @@ Common flags:
     case 'proposals':   return cmdProposals(engine, rest);
     case 'propose':
       if (rest.includes('--review')) return cmdProposals(engine, rest.filter(a => a !== '--review'));
-      if (rest.includes('--accept')) return cmdProposeAcceptDryRun(engine, rest);
+      if (rest.includes('--accept')) return cmdProposeAccept(engine, rest);
       console.error('Usage: gbrain takes propose --review [same flags as proposals]');
       process.exit(1);
     case 'add':         return cmdAdd(engine, rest);
