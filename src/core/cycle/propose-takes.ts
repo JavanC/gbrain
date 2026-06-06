@@ -672,6 +672,37 @@ class ProposeTakesPhase extends BaseCyclePhase {
     const resolvedDeadlineMs =
       opts.deadlineMs ?? resolveProposeTakesDeadlineMs(opts.deadlineAtMs, Date.now());
     const phaseStartMs = Date.now();
+
+    // Phase-local model routing. `models.dream.propose_takes` exists so this
+    // phase can run a different (usually stronger) model than the brain's
+    // global chat model without switching `models.chat` for everything else.
+    //
+    // The fallback follows the GATEWAY CHAT MODEL rather than a hardcoded id:
+    // upstream deliberately made the cycle phases record the model they
+    // actually run (`grade_takes` / `calibration_profile` moved the same way),
+    // and a hardcoded fallback would report a model the phase never used
+    // whenever the config key is unset. So: config key wins when set,
+    // otherwise upstream's behavior is preserved exactly.
+    // Phase-local model routing, layered ON TOP of upstream's behavior rather
+    // than replacing it. `models.dream.propose_takes` exists so this phase can
+    // run a stronger model than the brain's global chat model without changing
+    // `models.chat` for everything else.
+    //
+    // Only consult the resolver when an override actually exists. Handing
+    // `resolveModel` a tier makes it fall through to that tier's default
+    // (a hardcoded id) whenever the key is unset — which would report a model
+    // the phase never ran. Upstream deliberately moved these cycle phases to
+    // record the model they actually run (grade_takes / calibration_profile
+    // moved the same way), so with no override we keep exactly that.
+    const phaseModelOverride = (await engine.getConfig('models.dream.propose_takes'))?.trim();
+    const resolvedModel = (opts.model?.trim() || phaseModelOverride)
+      ? await (await import('../model-config.ts')).resolveModel(engine, {
+        cliFlag: opts.model,
+        configKey: 'models.dream.propose_takes',
+        tier: 'reasoning',
+        fallback: getChatModel(),
+      })
+      : getChatModel();
     const proposalRunId = `propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${randomUUID().slice(0, 8)}`;
 
     const modelId = opts.model ?? getChatModel();
@@ -835,7 +866,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
 
       // Budget pre-check before the LLM call. Estimate: ~1500 input tokens + 500 output.
       const budget = this.checkBudget({
-        modelId,
+        modelId: resolvedModel,
         estimatedInputTokens: 1500,
         maxOutputTokens: 500,
       });
@@ -859,7 +890,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
           pagePath: page.slug,
           pageBody: body,
           existingTakes,
-          modelHint: opts.model,
+          modelHint: resolvedModel,
           // #4494: configurable output caps (see resolution above).
           maxTokens: extractorMaxTokens,
           retryMaxTokens: extractorRetryMaxTokens,
@@ -924,8 +955,10 @@ class ProposeTakesPhase extends BaseCyclePhase {
             p.domain ?? null,
             JSON.stringify(existingTakes),
             // #4737: prefer the response-derived model (what actually
-            // answered) over the requested one for provenance.
-            p.served_model ?? modelId,
+            // answered) over the requested one for provenance. The requested
+            // one is the PHASE-ROUTED model (models.dream.propose_takes), not
+            // the brain's global chat model.
+            p.served_model ?? resolvedModel,
           ],
         );
         result.proposals_inserted += inserted.length;
