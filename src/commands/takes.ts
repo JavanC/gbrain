@@ -42,6 +42,10 @@ function flagPresent(args: string[], name: string): boolean {
   return args.includes(name);
 }
 
+function stringifyJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v) => typeof v === 'bigint' ? v.toString() : v, 2);
+}
+
 async function resolveBrainDir(engine: BrainEngine | null, explicitDir: string | null): Promise<string> {
   if (explicitDir) {
     if (!existsSync(explicitDir)) {
@@ -288,7 +292,7 @@ async function cmdProposals(engine: BrainEngine, args: string[]): Promise<void> 
 
   const filters = { status, source_id: sourceId ?? null, page_slug: pageSlug ?? null, run_id: runId ?? null, holder: holder ?? null, kind: kind ?? null, limit };
   if (json) {
-    console.log(JSON.stringify({ filters, count: rows.length, proposals: rows }, null, 2));
+    console.log(stringifyJson({ filters, count: rows.length, proposals: rows }));
     return;
   }
 
@@ -397,7 +401,7 @@ async function cmdProposeAcceptDryRun(engine: BrainEngine, args: string[]): Prom
     changes: previews,
   };
   if (json) {
-    console.log(JSON.stringify(result, null, 2));
+    console.log(stringifyJson(result));
     return;
   }
 
