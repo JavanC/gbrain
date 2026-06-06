@@ -736,6 +736,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'models.dream.synthesize',
   'models.dream.patterns',
   'models.dream.synthesize_verdict',
+  'models.dream.propose_takes',
   'models.drift',
   'models.auto_think',
   'models.think',
