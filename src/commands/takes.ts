@@ -3,7 +3,6 @@
  *
  * Subcommands:
  *   takes <slug>                          — list takes for a page
- *   takes list                            — list all active takes (#2079)
  *   takes search "<query>" [--who h]       — keyword search across all takes
  *   takes add <slug> ...flags              — append a take (markdown + DB)
  *   takes update <slug> --row N ...flags   — update mutable fields
@@ -16,17 +15,18 @@
  * file owns arg parsing + rendering + exit codes only.
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import type { BrainEngine, TakeKind } from '../core/engine.ts';
 import {
   addTakeToPage,
   updateTakeOnPage,
   supersedeTakeOnPage,
   resolveTakeOnPage,
+  resolveTakesFilePath,
   TakesWriteError,
 } from '../core/takes-write.ts';
+import { upsertTakeRow } from '../core/takes-fence.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
-import { resolveOwnerHolder } from '../core/owner-holder.ts';
 
 // --- Helpers ---
 
@@ -38,6 +38,10 @@ function flagValue(args: string[], name: string): string | undefined {
 
 function flagPresent(args: string[], name: string): boolean {
   return args.includes(name);
+}
+
+function stringifyJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v) => typeof v === 'bigint' ? v.toString() : v, 2);
 }
 
 async function resolveBrainDir(engine: BrainEngine | null, explicitDir: string | null): Promise<string> {
@@ -115,11 +119,6 @@ function readBodyOrEmpty(path: string): string {
   return readFileSync(path, 'utf-8');
 }
 
-function writeBody(path: string, body: string): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, body, 'utf-8');
-}
-
 type TakeProposalStatus = 'pending' | 'accepted' | 'rejected' | 'superseded';
 
 interface TakeProposalReviewRow {
@@ -186,10 +185,11 @@ function parseProposalIds(raw: string | undefined): number[] {
 // --- Subcommands ---
 
 async function cmdList(engine: BrainEngine, args: string[]): Promise<void> {
-  // #2079: slug is optional. `gbrain takes list` (no slug) lists ALL active
-  // takes — CLI parity with the takes_list operation. A leading flag is not
-  // a slug.
-  const slug = args[0] && !args[0].startsWith('-') ? args[0] : undefined;
+  const slug = args[0];
+  if (!slug) {
+    console.error('Usage: gbrain takes <slug> [--json]');
+    process.exit(1);
+  }
   const json = flagPresent(args, '--json');
   const holder = flagValue(args, '--who');
   const kind = flagValue(args, '--kind') as string | undefined;
@@ -209,19 +209,17 @@ async function cmdList(engine: BrainEngine, args: string[]): Promise<void> {
     return;
   }
 
-  const scope = slug ?? 'this brain';
   if (takes.length === 0) {
-    console.log(`No takes on ${scope}.`);
+    console.log(`No takes on ${slug}.`);
     return;
   }
-  console.log(`# Takes on ${scope}\n`);
+  console.log(`# Takes on ${slug}\n`);
   for (const t of takes) {
     const tag = t.active ? '' : ' [superseded]';
     const w = Number(t.weight).toFixed(2);
     const since = t.since_date ?? '';
     const src = t.source ? ` — ${t.source}` : '';
-    const where = slug ? '' : `${t.page_slug} `;
-    console.log(`${where}#${t.row_num} [${t.kind} • ${t.holder} • w=${w}${since ? ` • ${since}` : ''}]${tag}\n  ${t.claim}${src}\n`);
+    console.log(`#${t.row_num} [${t.kind} • ${t.holder} • w=${w}${since ? ` • ${since}` : ''}]${tag}\n  ${t.claim}${src}\n`);
   }
 }
 
@@ -284,7 +282,7 @@ async function cmdProposals(engine: BrainEngine, args: string[]): Promise<void> 
 
   const filters = { status, source_id: sourceId ?? null, page_slug: pageSlug ?? null, run_id: runId ?? null, holder: holder ?? null, kind: kind ?? null, limit };
   if (json) {
-    console.log(JSON.stringify({ filters, count: rows.length, proposals: rows }, null, 2));
+    console.log(stringifyJson({ filters, count: rows.length, proposals: rows }));
     return;
   }
 
@@ -316,12 +314,8 @@ async function cmdProposals(engine: BrainEngine, args: string[]): Promise<void> 
   }
 }
 
-async function cmdProposeAcceptDryRun(engine: BrainEngine, args: string[]): Promise<void> {
+async function cmdProposeAccept(engine: BrainEngine, args: string[]): Promise<void> {
   const dryRun = flagPresent(args, '--dry-run');
-  if (!dryRun) {
-    console.error('accept/promote is preview-only in this version. Pass --dry-run to inspect the markdown changes first.');
-    process.exit(2);
-  }
   const json = flagPresent(args, '--json');
   const ids = parseProposalIds(flagValue(args, '--accept'));
   const dirArg = flagValue(args, '--dir');
@@ -357,7 +351,11 @@ async function cmdProposeAcceptDryRun(engine: BrainEngine, args: string[]): Prom
   }> = [];
 
   for (const proposal of pendingRows) {
-    const filePath = pageFilePath(brainDir, proposal.page_slug);
+    // Same resolver the writer uses (source working tree before brain repo),
+    // so the preview reads the file promotion would actually touch.
+    const { path: filePath } = await resolveTakesFilePath(
+      engine, brainDir, proposal.page_slug, proposal.source_id,
+    );
     if (!existsSync(filePath)) {
       skipped.push({ id: Number(proposal.id), status: 'pending', page_slug: `${proposal.page_slug} (file missing)` });
       continue;
@@ -385,30 +383,87 @@ async function cmdProposeAcceptDryRun(engine: BrainEngine, args: string[]): Prom
     });
   }
 
-  const result = {
-    dry_run: true,
-    requested_ids: ids,
-    missing_ids: missingIds,
-    skipped,
-    changes: previews,
-  };
-  if (json) {
-    console.log(JSON.stringify(result, null, 2));
+  if (dryRun) {
+    const result = {
+      dry_run: true,
+      requested_ids: ids,
+      missing_ids: missingIds,
+      skipped,
+      changes: previews,
+    };
+    if (json) {
+      console.log(stringifyJson(result));
+      return;
+    }
+    if (previews.length === 0) {
+      console.log(`No pending proposals would be promoted (${ids.length} requested).`);
+    } else {
+      console.log(`# Take proposal accept preview (${previews.length} change${previews.length === 1 ? '' : 's'})\n`);
+      for (const p of previews) {
+        console.log(
+          `${p.page_slug}#${p.row_num} <= proposal #${p.id}\n` +
+          `  [${p.kind} • ${p.holder} • w=${p.weight.toFixed(2)}]\n` +
+          `  ${p.claim}\n` +
+          `  source=${p.source}\n`,
+        );
+      }
+    }
+    if (missingIds.length > 0) console.log(`Missing proposal ids: ${missingIds.join(', ')}`);
+    if (skipped.length > 0) {
+      console.log(`Skipped: ${skipped.map(s => `#${s.id}(${s.status})`).join(', ')}`);
+    }
     return;
   }
 
+  // --- Write path: promote pending proposals into ## Takes ---
   if (previews.length === 0) {
-    console.log(`No pending proposals would be promoted (${ids.length} requested).`);
-  } else {
-    console.log(`# Take proposal accept preview (${previews.length} change${previews.length === 1 ? '' : 's'})\n`);
-    for (const p of previews) {
-      console.log(
-        `${p.page_slug}#${p.row_num} <= proposal #${p.id}\n` +
-        `  [${p.kind} • ${p.holder} • w=${p.weight.toFixed(2)}]\n` +
-        `  ${p.claim}\n` +
-        `  source=${p.source}\n`,
-      );
+    if (json) {
+      console.log(stringifyJson({ dry_run: false, requested_ids: ids, missing_ids: missingIds, skipped, promoted: [] }));
+    } else {
+      console.log(`No pending proposals to promote (${ids.length} requested).`);
+      if (missingIds.length > 0) console.log(`Missing proposal ids: ${missingIds.join(', ')}`);
+      if (skipped.length > 0) console.log(`Skipped: ${skipped.map(s => `#${s.id}(${s.status})`).join(', ')}`);
     }
+    return;
+  }
+
+  // One promotion = one addTakeToPage call: it owns the page lock, the
+  // fence round-trip guard, the source-aware write root, and the DB mirror
+  // (a failed mirror is a warning, healed by the next reconcile — never a
+  // duplicate markdown row). The proposal row is only marked accepted after
+  // its take is durable on disk, so an interrupted run re-promotes nothing
+  // it already wrote and leaves the rest pending.
+  const promoted: typeof previews = [];
+  for (const p of previews) {
+    try {
+      const { rowNum } = await addTakeToPage(
+        { engine, slug: p.page_slug, brainDir, sourceId: p.source_id },
+        { claim: p.claim, kind: ensureKind(p.kind), holder: p.holder, weight: p.weight, source: p.source },
+      );
+      p.row_num = rowNum;
+      await engine.executeRaw(
+        `UPDATE take_proposals
+            SET status = 'accepted', acted_at = now(), acted_by = 'cli', promoted_row_num = $2
+          WHERE id = $1`,
+        [p.id, rowNum],
+      );
+      promoted.push(p);
+    } catch (err) {
+      exitTakesError(err);
+    }
+  }
+
+  if (json) {
+    console.log(stringifyJson({ dry_run: false, requested_ids: ids, missing_ids: missingIds, skipped, promoted }));
+    return;
+  }
+  console.log(`# Promoted ${promoted.length} proposal${promoted.length === 1 ? '' : 's'}\n`);
+  for (const p of promoted) {
+    console.log(
+      `${p.page_slug}#${p.row_num} <= proposal #${p.id}\n` +
+      `  [${p.kind} • ${p.holder} • w=${p.weight.toFixed(2)}]\n` +
+      `  ${p.claim}\n`,
+    );
   }
   if (missingIds.length > 0) console.log(`Missing proposal ids: ${missingIds.join(', ')}`);
   if (skipped.length > 0) {
@@ -558,7 +613,7 @@ async function cmdResolve(engine: BrainEngine, args: string[], sourceId?: string
   // --evidence is the v0.30.0 alias for --source on the resolve subcommand
   // (semantic clarity: "what evidence resolved this bet?").
   const source = flagValue(args, '--evidence') ?? flagValue(args, '--source');
-  const resolvedBy = flagValue(args, '--by') ?? resolveOwnerHolder({ configValue: await engine.getConfig('emotional_weight.user_holder') });
+  const resolvedBy = flagValue(args, '--by') ?? 'garry';
   const dirArg = flagValue(args, '--dir');
   const brainDir = await resolveBrainDir(engine, dirArg ?? null);
 
@@ -711,8 +766,6 @@ export async function runTakes(engine: BrainEngine, args: string[]): Promise<voi
 Subcommands:
   takes <slug> [--json] [--who h] [--kind k] [--sort weight|since_date|created_at] [--expired]
                                           List takes for a page
-  takes list [--json] [--who h] [--kind k] [--sort ...] [--expired]
-                                          List all active takes across the brain (#2079)
   takes search "<query>" [--limit N] [--json]
                                           Keyword search across all takes
   takes proposals [--status pending] [--source-id ID] [--page slug] [--run-id ID]
@@ -720,8 +773,9 @@ Subcommands:
                                           Review take_proposals queue without writing
   takes propose --review [same flags as proposals]
                                           Alias for takes proposals
-  takes propose --accept <id[,id...]> --dry-run [--dir <path>] [--json]
-                                          Preview promoting pending proposals into ## Takes
+  takes propose --accept <id[,id...]> [--dry-run] [--dir <path>] [--json]
+                                          Promote pending proposals into ## Takes (markdown + DB)
+                                          --dry-run previews without writing
   takes add <slug> --claim "..." --kind <fact|take|bet|hunch> --who <holder>
                    [--weight 0.5] [--source "..."] [--since YYYY-MM]
                                           Append a take (markdown + DB)
@@ -749,14 +803,11 @@ Common flags:
   const rest = args.slice(1);
 
   switch (sub) {
-    // #2079: `takes list` used to be parsed as page slug "list" and printed
-    // "No takes on list." — reading exactly like an empty takes table.
-    case 'list':        return cmdList(engine, rest);
     case 'search':      return cmdSearch(engine, rest);
     case 'proposals':   return cmdProposals(engine, rest);
     case 'propose':
       if (rest.includes('--review')) return cmdProposals(engine, rest.filter(a => a !== '--review'));
-      if (rest.includes('--accept')) return cmdProposeAcceptDryRun(engine, rest);
+      if (rest.includes('--accept')) return cmdProposeAccept(engine, rest);
       console.error('Usage: gbrain takes propose --review [same flags as proposals]');
       process.exit(1);
     case 'add':         return cmdAdd(engine, rest, await resolveTakesSourceId(engine));
@@ -786,13 +837,12 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
   const sub = rest[0];
   if (sub !== '--from-pages') {
     process.stderr.write(
-      'Usage: gbrain takes extract --from-pages [--yes] [--dry-run] [--json] [--source-id <id>] [--max-pages N (clamped to 1000)] [--include-covered] [--holder <name>]\n' +
+      'Usage: gbrain takes extract --from-pages [--yes] [--dry-run] [--source-id <id>] [--max-pages N (clamped to 1000)] [--include-covered] [--holder <name>]\n' +
       'Runs progress: pages that already hold takes are skipped, so repeat runs sweep a large corpus in slices. --include-covered rescans everything (refresh).\n',
     );
     process.exit(1);
   }
   const dryRun = rest.includes('--dry-run');
-  const json = rest.includes('--json');
   const skipConfirm = rest.includes('--yes');
   const sourceIdx = rest.indexOf('--source-id');
   const sourceIdFilter = sourceIdx >= 0 ? rest[sourceIdx + 1] : undefined;
@@ -830,16 +880,8 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
     holder,
   });
   if (result.llm_unavailable) {
-    if (json) {
-      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-    } else {
-      process.stderr.write(`[takes extract] chat gateway unavailable (no API key configured).\n`);
-    }
+    process.stderr.write(`[takes extract] chat gateway unavailable (no API key configured).\n`);
     process.exit(2);
-  }
-  if (json) {
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-    return;
   }
   process.stdout.write(
     `takes extract --from-pages: ${result.claims_extracted} claim(s) from ${result.pages_scanned} page(s)` +
