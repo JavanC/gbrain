@@ -1374,6 +1374,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // #4152: preferred triage-model key (explicit pre-read in loadSynthConfig;
   // wins over models.dream.synthesize_verdict + dream.synthesize.verdict_model).
   'models.dream.triage',
+  'models.dream.propose_takes',
   'models.drift',
   'models.auto_think',
   'models.think',
