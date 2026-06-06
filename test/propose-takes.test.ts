@@ -399,6 +399,36 @@ New prose appended here.`;
     expect(details.proposals_inserted).toBe(1);
   });
 
+  test('pageLimit applies after include/exclude scope filtering', async () => {
+    const pages = [
+      buildPage({ slug: 'writing/navigation-map', body: 'map prose' }),
+      buildPage({ slug: 'projects/first', body: 'first project prose' }),
+      buildPage({ slug: 'extracts/2026-06-06/takes-proposed', body: 'receipt prose' }),
+      buildPage({ slug: 'projects/second', body: 'second project prose' }),
+      buildPage({ slug: 'projects/third', body: 'third project prose' }),
+    ];
+    const { engine } = buildMockEngine({ pages });
+    const seen: string[] = [];
+    const extractor: ProposeTakesExtractor = async ({ pagePath }) => {
+      seen.push(pagePath);
+      return [{ claim_text: `${pagePath} claim`, kind: 'take', holder: 'brain', weight: 0.5 }];
+    };
+
+    const result = await runPhaseProposeTakes(buildCtx(engine), {
+      extractor,
+      includeSlugs: ['projects/**'],
+      excludeSlugs: ['extracts/**'],
+      pageLimit: 2,
+    });
+
+    expect(seen).toEqual(['projects/first', 'projects/second']);
+    const details = result.details as Record<string, unknown>;
+    expect(details.pages_scanned).toBe(4);
+    expect(details.pages_skipped_scope).toBe(2);
+    expect(details.cache_misses).toBe(2);
+    expect(details.proposals_inserted).toBe(2);
+  });
+
   test('excludeSlugs prevents generated or receipt pages from being scanned', async () => {
     const pages = [
       buildPage({ slug: 'projects/valuable-page', body: 'project prose' }),
