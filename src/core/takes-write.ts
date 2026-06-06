@@ -143,7 +143,13 @@ export async function resolveTakesRepoDir(engine: BrainEngine): Promise<string |
  * The returned `writeRoot` is the containment boundary enforced before any write
  * (P1-2). `resolvePageFilePath` does the slug→path join for the fallback case.
  */
-async function resolveTakesFilePath(
+/**
+ * Where a page's takes fence lives, honoring a source's own working tree
+ * before the brain repo. Exported so a read-only caller (the take-proposal
+ * accept preview) can look at the same file the writer would touch without
+ * reimplementing the source-local_path precedence.
+ */
+export async function resolveTakesFilePath(
   engine: BrainEngine,
   brainDir: string | null,
   slug: string,

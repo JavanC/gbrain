@@ -154,6 +154,123 @@ describe('gbrain takes proposals', () => {
     expect(captured[0].params).toEqual([101]);
   });
 
+  test('accept without --dry-run writes markdown, DB takes, and updates proposal status', async () => {
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-takes-proposals-'));
+    mkdirSync(join(brainDir, 'projects'), { recursive: true });
+    const pagePath = join(brainDir, 'projects/example.md');
+    writeFileSync(pagePath, '# Example\n\nCompiled truth.\n', 'utf8');
+    const captured: CapturedQuery[] = [];
+    const addedTakes: Array<Record<string, unknown>> = [];
+    const proposalRow = {
+      id: 201,
+      source_id: 'javan-brain',
+      page_slug: 'projects/example',
+      content_hash: 'abc',
+      prompt_version: 'v-test',
+      proposed_at: '2026-06-06T01:02:03.000Z',
+      proposal_run_id: 'propose-run',
+      status: 'pending',
+      claim_text: 'Promoted take from proposal.',
+      kind: 'take',
+      holder: 'brain',
+      weight: 0.8,
+      domain: null,
+      model_id: 'openai:gpt-5.5',
+      predicted_brier: null,
+      predicted_brier_bucket_n: null,
+    };
+    const engine = {
+      executeRaw: async (sql: string, params: unknown[]) => {
+        captured.push({ sql, params });
+        if (sql.includes('FROM take_proposals')) return [proposalRow];
+        if (sql.includes('FROM pages')) return [{ id: 99 }];
+        return [];
+      },
+      addTakesBatch: async (batch: Array<Record<string, unknown>>) => {
+        addedTakes.push(...batch);
+      },
+    } as any;
+
+    const out = await captureStdout(() => runTakes(engine, [
+      'propose', '--accept', '201', '--dir', brainDir, '--json',
+    ]));
+
+    const parsed = JSON.parse(out) as { dry_run: boolean; promoted: Array<Record<string, unknown>> };
+    expect(parsed.dry_run).toBe(false);
+    expect(parsed.promoted).toHaveLength(1);
+    expect(parsed.promoted[0]).toMatchObject({
+      id: 201,
+      page_slug: 'projects/example',
+      row_num: 1,
+      claim: 'Promoted take from proposal.',
+      source: 'gbrain:take_proposals#201',
+    });
+
+    const body = readFileSync(pagePath, 'utf8');
+    expect(body).toContain('## Takes');
+    expect(body).toContain('Promoted take from proposal.');
+    expect(body).toContain('gbrain:take_proposals#201');
+
+    expect(addedTakes).toHaveLength(1);
+    expect(addedTakes[0]).toMatchObject({ page_id: 99, row_num: 1, claim: 'Promoted take from proposal.' });
+
+    const updateQuery = captured.find(c => c.sql.includes('UPDATE take_proposals'));
+    expect(updateQuery).toBeDefined();
+    expect(updateQuery!.params[0]).toBe(201);
+    expect(updateQuery!.params[1]).toBe(1);
+    expect(updateQuery!.sql).toContain("status = 'accepted'");
+  });
+
+  test('accept promotes multiple proposals across pages in one call', async () => {
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-takes-proposals-'));
+    mkdirSync(join(brainDir, 'projects'), { recursive: true });
+    mkdirSync(join(brainDir, 'wiki'), { recursive: true });
+    writeFileSync(join(brainDir, 'projects/alpha.md'), '# Alpha\n', 'utf8');
+    writeFileSync(join(brainDir, 'wiki/beta.md'), '# Beta\n', 'utf8');
+    const captured: CapturedQuery[] = [];
+    const addedTakes: Array<Record<string, unknown>> = [];
+    const proposalRows = [
+      {
+        id: 301, source_id: 'javan-brain', page_slug: 'projects/alpha',
+        content_hash: 'a', prompt_version: 'v1', proposed_at: '2026-06-06T01:00:00.000Z',
+        proposal_run_id: 'run1', status: 'pending', claim_text: 'Alpha claim.',
+        kind: 'take', holder: 'brain', weight: 0.7, domain: null,
+        model_id: 'openai:gpt-5.5', predicted_brier: null, predicted_brier_bucket_n: null,
+      },
+      {
+        id: 302, source_id: 'javan-brain', page_slug: 'wiki/beta',
+        content_hash: 'b', prompt_version: 'v1', proposed_at: '2026-06-06T01:00:00.000Z',
+        proposal_run_id: 'run1', status: 'pending', claim_text: 'Beta claim.',
+        kind: 'fact', holder: 'brain', weight: 0.9, domain: null,
+        model_id: 'openai:gpt-5.5', predicted_brier: null, predicted_brier_bucket_n: null,
+      },
+    ];
+    const engine = {
+      executeRaw: async (sql: string, params: unknown[]) => {
+        captured.push({ sql, params });
+        if (sql.includes('FROM take_proposals')) return proposalRows;
+        if (sql.includes('FROM pages')) return [{ id: 50 }];
+        return [];
+      },
+      addTakesBatch: async (batch: Array<Record<string, unknown>>) => {
+        addedTakes.push(...batch);
+      },
+    } as any;
+
+    const out = await captureStdout(() => runTakes(engine, [
+      'propose', '--accept', '301,302', '--dir', brainDir, '--json',
+    ]));
+
+    const parsed = JSON.parse(out) as { promoted: Array<Record<string, unknown>> };
+    expect(parsed.promoted).toHaveLength(2);
+    expect(addedTakes).toHaveLength(2);
+    const updates = captured.filter(c => c.sql.includes('UPDATE take_proposals'));
+    expect(updates).toHaveLength(2);
+
+    expect(readFileSync(join(brainDir, 'projects/alpha.md'), 'utf8')).toContain('Alpha claim.');
+    expect(readFileSync(join(brainDir, 'wiki/beta.md'), 'utf8')).toContain('Beta claim.');
+  });
+
   test('accept dry-run skips non-pending proposals', async () => {
     const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-takes-proposals-'));
     mkdirSync(join(brainDir, 'projects'), { recursive: true });
