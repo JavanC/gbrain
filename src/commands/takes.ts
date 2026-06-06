@@ -109,7 +109,7 @@ function writeBody(path: string, body: string): void {
   writeFileSync(path, body, 'utf-8');
 }
 
-type TakeProposalStatus = 'pending' | 'accepted' | 'rejected' | 'superseded';
+type TakeProposalStatus = 'pending' | 'accepted' | 'rejected' | 'superseded' | 'empty';
 
 interface TakeProposalReviewRow {
   id: number | string;
@@ -135,10 +135,10 @@ interface TakeProposalAcceptRow extends TakeProposalReviewRow {
 
 function ensureProposalStatus(raw: string | undefined): TakeProposalStatus {
   const status = raw ?? 'pending';
-  if (status === 'pending' || status === 'accepted' || status === 'rejected' || status === 'superseded') {
+  if (status === 'pending' || status === 'accepted' || status === 'rejected' || status === 'superseded' || status === 'empty') {
     return status;
   }
-  console.error(`Invalid --status "${status}". Expected: pending, accepted, rejected, superseded.`);
+  console.error(`Invalid --status "${status}". Expected: pending, accepted, rejected, superseded, empty.`);
   process.exit(1);
 }
 
