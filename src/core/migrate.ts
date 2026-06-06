@@ -3415,7 +3415,7 @@ export const MIGRATIONS: Migration[] = [
         proposed_at                 TIMESTAMPTZ  NOT NULL DEFAULT now(),
         proposal_run_id             TEXT         NOT NULL,
         status                      TEXT         NOT NULL DEFAULT 'pending'
-                                                 CHECK (status IN ('pending','accepted','rejected','superseded')),
+                                                 CHECK (status IN ('pending','accepted','rejected','superseded','empty')),
         claim_text                  TEXT         NOT NULL,
         kind                        TEXT         NOT NULL,
         holder                      TEXT         NOT NULL,
@@ -5117,6 +5117,23 @@ export const MIGRATIONS: Migration[] = [
         ALTER TABLE links DROP CONSTRAINT IF EXISTS links_link_source_check;
         ALTER TABLE links ADD CONSTRAINT links_link_source_check
           CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual', 'mentions', 'wikilink-resolved'));
+      `,
+    },
+  },
+  {
+    version: 114,
+    name: 'take_proposals_status_check_includes_empty',
+    idempotent: true,
+    sql: `
+      ALTER TABLE take_proposals DROP CONSTRAINT IF EXISTS take_proposals_status_check;
+      ALTER TABLE take_proposals ADD CONSTRAINT take_proposals_status_check
+        CHECK (status IN ('pending','accepted','rejected','superseded','empty'));
+    `,
+    sqlFor: {
+      pglite: `
+        ALTER TABLE take_proposals DROP CONSTRAINT IF EXISTS take_proposals_status_check;
+        ALTER TABLE take_proposals ADD CONSTRAINT take_proposals_status_check
+          CHECK (status IN ('pending','accepted','rejected','superseded','empty'));
       `,
     },
   },
