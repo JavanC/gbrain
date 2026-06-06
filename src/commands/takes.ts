@@ -144,6 +144,11 @@ interface TakeProposalReviewRow {
   predicted_brier_bucket_n: number | string | null;
 }
 
+interface TakeProposalAcceptRow extends TakeProposalReviewRow {
+  content_hash: string;
+  prompt_version: string;
+}
+
 function ensureProposalStatus(raw: string | undefined): TakeProposalStatus {
   const status = raw ?? 'pending';
   if (status === 'pending' || status === 'accepted' || status === 'rejected' || status === 'superseded') {
@@ -161,6 +166,26 @@ function ensurePositiveInt(raw: string | undefined, fallback: number, label: str
     process.exit(1);
   }
   return n;
+}
+
+function parseProposalIds(raw: string | undefined): number[] {
+  if (!raw) {
+    console.error('Missing --accept <id[,id...]>.');
+    process.exit(1);
+  }
+  const ids = raw.split(',').map(s => s.trim()).filter(Boolean).map((part) => {
+    const n = parseInt(part, 10);
+    if (!Number.isFinite(n) || n <= 0 || String(n) !== part) {
+      console.error(`Invalid proposal id "${part}". Expected positive integers separated by commas.`);
+      process.exit(1);
+    }
+    return n;
+  });
+  if (ids.length === 0) {
+    console.error('Missing --accept <id[,id...]>.');
+    process.exit(1);
+  }
+  return [...new Set(ids)];
 }
 
 // --- Subcommands ---
@@ -292,6 +317,106 @@ async function cmdProposals(engine: BrainEngine, args: string[]): Promise<void> 
       `  ${row.claim_text}\n` +
       `  run=${row.proposal_run_id} • model=${row.model_id} • proposed_at=${new Date(row.proposed_at).toISOString()}\n`,
     );
+  }
+}
+
+async function cmdProposeAcceptDryRun(engine: BrainEngine, args: string[]): Promise<void> {
+  const dryRun = flagPresent(args, '--dry-run');
+  if (!dryRun) {
+    console.error('accept/promote is preview-only in this version. Pass --dry-run to inspect the markdown changes first.');
+    process.exit(2);
+  }
+  const json = flagPresent(args, '--json');
+  const ids = parseProposalIds(flagValue(args, '--accept'));
+  const dirArg = flagValue(args, '--dir');
+  const brainDir = await resolveBrainDir(engine, dirArg ?? null);
+
+  const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+  const rows = await engine.executeRaw<TakeProposalAcceptRow>(
+    `SELECT id, source_id, page_slug, content_hash, prompt_version, proposed_at,
+            proposal_run_id, status, claim_text, kind, holder, weight, domain,
+            model_id, predicted_brier, predicted_brier_bucket_n
+       FROM take_proposals
+      WHERE id IN (${placeholders})
+      ORDER BY page_slug ASC, id ASC`,
+    ids,
+  );
+
+  const foundIds = new Set(rows.map(r => Number(r.id)));
+  const missingIds = ids.filter(id => !foundIds.has(id));
+  const skipped = rows
+    .filter(r => r.status !== 'pending')
+    .map(r => ({ id: Number(r.id), status: r.status, page_slug: r.page_slug }));
+  const pendingRows = rows.filter(r => r.status === 'pending');
+  const previews: Array<{
+    id: number;
+    source_id: string;
+    page_slug: string;
+    row_num: number;
+    claim: string;
+    kind: string;
+    holder: string;
+    weight: number;
+    source: string;
+  }> = [];
+
+  for (const proposal of pendingRows) {
+    const filePath = pageFilePath(brainDir, proposal.page_slug);
+    if (!existsSync(filePath)) {
+      skipped.push({ id: Number(proposal.id), status: 'pending', page_slug: `${proposal.page_slug} (file missing)` });
+      continue;
+    }
+    const body = readBodyOrEmpty(filePath);
+    const source = `gbrain:take_proposals#${proposal.id}`;
+    const { rowNum } = upsertTakeRow(body, {
+      claim: proposal.claim_text,
+      kind: proposal.kind,
+      holder: proposal.holder,
+      weight: Number(proposal.weight),
+      source,
+      active: true,
+    });
+    previews.push({
+      id: Number(proposal.id),
+      source_id: proposal.source_id,
+      page_slug: proposal.page_slug,
+      row_num: rowNum,
+      claim: proposal.claim_text,
+      kind: proposal.kind,
+      holder: proposal.holder,
+      weight: Number(proposal.weight),
+      source,
+    });
+  }
+
+  const result = {
+    dry_run: true,
+    requested_ids: ids,
+    missing_ids: missingIds,
+    skipped,
+    changes: previews,
+  };
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (previews.length === 0) {
+    console.log(`No pending proposals would be promoted (${ids.length} requested).`);
+  } else {
+    console.log(`# Take proposal accept preview (${previews.length} change${previews.length === 1 ? '' : 's'})\n`);
+    for (const p of previews) {
+      console.log(
+        `${p.page_slug}#${p.row_num} <= proposal #${p.id}\n` +
+        `  [${p.kind} • ${p.holder} • w=${p.weight.toFixed(2)}]\n` +
+        `  ${p.claim}\n` +
+        `  source=${p.source}\n`,
+      );
+    }
+  }
+  if (missingIds.length > 0) console.log(`Missing proposal ids: ${missingIds.join(', ')}`);
+  if (skipped.length > 0) {
+    console.log(`Skipped: ${skipped.map(s => `#${s.id}(${s.status})`).join(', ')}`);
   }
 }
 
@@ -667,6 +792,8 @@ Subcommands:
                                           Review take_proposals queue without writing
   takes propose --review [same flags as proposals]
                                           Alias for takes proposals
+  takes propose --accept <id[,id...]> --dry-run [--dir <path>] [--json]
+                                          Preview promoting pending proposals into ## Takes
   takes add <slug> --claim "..." --kind <fact|take|bet|hunch> --who <holder>
                    [--weight 0.5] [--source "..."] [--since YYYY-MM]
                                           Append a take (markdown + DB)
@@ -698,6 +825,7 @@ Common flags:
     case 'proposals':   return cmdProposals(engine, rest);
     case 'propose':
       if (rest.includes('--review')) return cmdProposals(engine, rest.filter(a => a !== '--review'));
+      if (rest.includes('--accept')) return cmdProposeAcceptDryRun(engine, rest);
       console.error('Usage: gbrain takes propose --review [same flags as proposals]');
       process.exit(1);
     case 'add':         return cmdAdd(engine, rest, await resolveTakesSourceId(engine));
