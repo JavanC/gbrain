@@ -353,6 +353,13 @@ class ProposeTakesPhase extends BaseCyclePhase {
     const promptVersion = opts.promptVersion ?? PROPOSE_TAKES_PROMPT_VERSION;
     const pageLimit = opts.pageLimit ?? 100;
     const skipPagesWithFence = opts.skipPagesWithFence ?? false;
+    const { resolveModel } = await import('../model-config.ts');
+    const resolvedModel = await resolveModel(engine, {
+      cliFlag: opts.model,
+      configKey: 'models.dream.propose_takes',
+      tier: 'reasoning',
+      fallback: 'claude-sonnet-4-6',
+    });
     const proposalRunId = `propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${randomUUID().slice(0, 8)}`;
 
     const result: ProposeTakesResult = {
@@ -419,7 +426,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
 
       // Budget pre-check before the LLM call. Estimate: ~1500 input tokens + 500 output.
       const budget = this.checkBudget({
-        modelId: opts.model ?? 'claude-sonnet-4-6',
+        modelId: resolvedModel,
         estimatedInputTokens: 1500,
         maxOutputTokens: 500,
       });
@@ -438,7 +445,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
           pagePath: page.slug,
           pageBody: body,
           existingTakes,
-          modelHint: opts.model,
+          modelHint: resolvedModel,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -469,7 +476,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
             p.weight,
             p.domain ?? null,
             JSON.stringify(existingTakes),
-            opts.model ?? 'claude-sonnet-4-6',
+            resolvedModel,
           ],
         );
         if (inserted.length > 0) result.proposals_inserted += 1;
