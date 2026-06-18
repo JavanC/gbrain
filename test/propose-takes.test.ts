@@ -21,6 +21,7 @@ import {
   parseExtractorOutput,
   EXTRACT_TAKES_PROMPT,
   contentHash,
+  proposalHashBody,
   hasCompleteFence,
   extractExistingTakesForDedup,
   isWellFormedEmptyExtraction,
@@ -316,6 +317,22 @@ describe('contentHash', () => {
   test('different input produces different hash', () => {
     expect(contentHash('a')).not.toBe(contentHash('b'));
   });
+
+  test('removes the empty Takes section from proposal hash body', () => {
+    const base = `# Page\n\nStable prose about a decision.\n`;
+    const withTakes = `${base}\n## Takes\n\n<!--- gbrain:takes:begin -->\n| # | claim | kind | who | weight | since | source |\n|---|-------|------|-----|--------|-------|--------|\n| 1 | Existing claim | take | brain | 0.5 | 2026-06 | gbrain:take_proposals#1 |\n<!--- gbrain:takes:end -->\n`;
+
+    expect(proposalHashBody(withTakes)).toBe(base);
+  });
+
+  test('ignores takes fence changes so accepting proposals does not invalidate cache', () => {
+    const base = `# Page\n\nStable prose about a decision.\n`;
+    const withOneTake = `${base}\n## Takes\n\n<!--- gbrain:takes:begin -->\n| # | claim | kind | who | weight | since | source |\n|---|-------|------|-----|--------|-------|--------|\n| 1 | Existing claim | take | brain | 0.5 | 2026-06 | gbrain:take_proposals#1 |\n<!--- gbrain:takes:end -->\n`;
+    const withTwoTakes = `${base}\n## Takes\n\n<!--- gbrain:takes:begin -->\n| # | claim | kind | who | weight | since | source |\n|---|-------|------|-----|--------|-------|--------|\n| 1 | Existing claim | take | brain | 0.5 | 2026-06 | gbrain:take_proposals#1 |\n| 2 | Newly accepted claim | take | brain | 0.6 | 2026-06 | gbrain:take_proposals#2 |\n<!--- gbrain:takes:end -->\n`;
+
+    expect(contentHash(withOneTake)).toBe(contentHash(withTwoTakes));
+    expect(contentHash(withOneTake)).toBe(contentHash(base));
+  });
 });
 
 // ─── hasCompleteFence ───────────────────────────────────────────────
@@ -440,6 +457,29 @@ describe('runPhaseProposeTakes — phase integration', () => {
     expect(seenModelHint).toBe('openai:gpt-5.5');
     const insert = captured.find(c => c.sql.includes('INSERT INTO take_proposals'));
     expect(insert?.params[11]).toBe('openai:gpt-5.5');
+  });
+
+  test('cache hit survives accepted-takes fence changes', async () => {
+    const base = '# Page\n\nStable prose worth checking.';
+    const processedBody = `${base}\n\n## Takes\n\n<!--- gbrain:takes:begin -->\n| # | claim | kind | who | weight | since | source |\n|---|-------|------|-----|--------|-------|--------|\n| 1 | Old claim | take | brain | 0.5 | 2026-06 | gbrain:take_proposals#10 |\n<!--- gbrain:takes:end -->\n`;
+    const acceptedLaterBody = `${base}\n\n## Takes\n\n<!--- gbrain:takes:begin -->\n| # | claim | kind | who | weight | since | source |\n|---|-------|------|-----|--------|-------|--------|\n| 1 | Old claim | take | brain | 0.5 | 2026-06 | gbrain:take_proposals#10 |\n| 2 | Accepted later | take | brain | 0.6 | 2026-06 | gbrain:take_proposals#11 |\n<!--- gbrain:takes:end -->\n`;
+    const pages = [buildPage({ slug: 'wiki/fence-only-change', body: acceptedLaterBody })];
+    const ch = contentHash(processedBody);
+    const existing = new Set([`default|wiki/fence-only-change|${ch}|${PROPOSE_TAKES_PROMPT_VERSION}`]);
+    const { engine, captured } = buildMockEngine({ pages, existingProposals: existing });
+    let extractorCalled = false;
+    const extractor: ProposeTakesExtractor = async () => {
+      extractorCalled = true;
+      return [{ claim_text: 'should not run', kind: 'take', holder: 'brain', weight: 0.5 }];
+    };
+
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    expect(extractorCalled).toBe(false);
+    const details = result.details as Record<string, unknown>;
+    expect(details.cache_hits).toBe(1);
+    expect(details.cache_misses).toBe(0);
+    expect(captured.filter(c => c.sql.includes('INSERT INTO take_proposals'))).toHaveLength(0);
   });
 
   test('cache hit: page already in take_proposals is skipped', async () => {
