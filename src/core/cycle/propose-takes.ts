@@ -47,6 +47,7 @@ import { GBrainError } from '../types.ts';
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseStatus, CyclePhase } from '../cycle.ts';
+import { stripTakesFence } from '../takes-fence.ts';
 
 /**
  * Bump when the extractor prompt or the JSON output shape changes. Old
@@ -154,7 +155,7 @@ export interface ProposeTakesOpts extends BasePhaseOpts {
   promptVersion?: string;
   /** Override model id (tests + config). */
   model?: string;
-  /** Skip pages that already have a complete takes fence. Default: true. */
+  /** Skip pages that already have a complete takes fence. Default: false. */
   skipPagesWithFence?: boolean;
   /** Override the phase wall-clock deadline (tests). Default: 30 min. */
   deadlineMs?: number;
@@ -216,12 +217,24 @@ async function listCandidatePages(
 }
 
 /**
- * Compute the content_hash key for the idempotency cache. SHA-256 of the
- * page body suffices — page slug + prompt_version are separate columns in
- * the composite unique index.
+ * Normalize the body used for the proposal idempotency cache. Accepting
+ * proposals appends/updates the `## Takes` system-of-record section; that
+ * should not make propose_takes re-spend LLM tokens on otherwise unchanged
+ * prose. Keep the full body for the extractor itself so existing fence rows
+ * still flow through as dedup context.
+ */
+export function proposalHashBody(pageBody: string): string {
+  const withoutFence = stripTakesFence(pageBody);
+  if (withoutFence === pageBody) return pageBody;
+  return withoutFence.replace(/(^|\n)## Takes[ \t]*\n+(?=\s*(?:#{1,6}\s|$))/g, '');
+}
+
+/**
+ * Compute the content_hash key for the idempotency cache. Page slug +
+ * prompt_version are separate columns in the composite unique index.
  */
 export function contentHash(pageBody: string): string {
-  return createHash('sha256').update(pageBody).digest('hex');
+  return createHash('sha256').update(proposalHashBody(pageBody)).digest('hex');
 }
 
 /**
