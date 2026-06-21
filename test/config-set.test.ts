@@ -38,6 +38,15 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('embed.backfill_max_usd');
   });
 
+  test('contains DB pacing keys', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('pace.mode');
+    expect(KNOWN_CONFIG_KEYS).toContain('pace.enabled');
+    expect(KNOWN_CONFIG_KEYS).toContain('pace.max_concurrency');
+    expect(KNOWN_CONFIG_KEYS).toContain('pace.pace_at_ms');
+    expect(KNOWN_CONFIG_KEYS).toContain('pace.max_sleep_ms');
+    expect(KNOWN_CONFIG_KEYS).toContain('pace.ewma_alpha');
+  });
+
   test('contains conversation facts backfill cycle keys', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('cycle.conversation_facts_backfill.enabled');
     expect(KNOWN_CONFIG_KEYS).toContain('cycle.conversation_facts_backfill.max_cost_usd');
@@ -59,6 +68,7 @@ describe('KNOWN_CONFIG_KEY_PREFIXES', () => {
     expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('search.');
     expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('models.');
     expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('dream.');
+    expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('pace.');
   });
 
   test('prefixes end in `.` (consistent shape)', () => {
@@ -132,6 +142,10 @@ describe('prefix vs known-key gate logic (mirrored from runConfig)', () => {
 
   test('models.custom.x (under prefix) → "prefix"', () => {
     expect(gate('models.custom.x')).toBe('prefix');
+  });
+
+  test('pace.experimental (under prefix) → "prefix"', () => {
+    expect(gate('pace.experimental')).toBe('prefix');
   });
 
   test('bug-reporter: embedding.provider → "unknown" (no prefix match)', () => {

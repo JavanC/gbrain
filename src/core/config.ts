@@ -935,6 +935,13 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'embed.backfill_cooldown_min',
   'embed.backfill_max_usd_per_source_24h',
   'embed.backfill_max_usd',
+  // DB contention pacing (v0.42.49+). Runtime readers live in pace-mode.ts.
+  'pace.mode',
+  'pace.enabled',
+  'pace.max_concurrency',
+  'pace.pace_at_ms',
+  'pace.max_sleep_ms',
+  'pace.ewma_alpha',
 ];
 
 /**
@@ -953,6 +960,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'mcp.',               // mcp.publish_skills, mcp.skills_dir (PR1 skill catalog)
   'autopilot.',         // autopilot.nightly_quality_probe.*, autopilot.auto_drain.* (#1685)
   'self_upgrade.',      // v0.42 self-upgrade (mode, quiet_hours, state)
+  'pace.',              // DB contention pacing (pace.mode, pace.max_concurrency, etc.)
 ];
 
 export function saveConfig(config: GBrainConfig): void {
