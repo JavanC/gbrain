@@ -1214,6 +1214,13 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Read by performSync + runImport summary aggregation; 'false'/'0'/'off'
   // silences both surfaces (schema lint rules stay active).
   'schema.type_warnings',
+  // DB contention pacing (v0.42.49+). Runtime readers live in pace-mode.ts.
+  'pace.mode',
+  'pace.enabled',
+  'pace.max_concurrency',
+  'pace.pace_at_ms',
+  'pace.max_sleep_ms',
+  'pace.ewma_alpha',
 ];
 
 /**
@@ -1240,6 +1247,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   //   minions.ttl_notice_shown flag. Booleans via the canonical truthiness
   //   parser; numeric 0 disables.
   'minions.',
+  'pace.',              // DB contention pacing (pace.mode, pace.max_concurrency, etc.)
 ];
 
 /**

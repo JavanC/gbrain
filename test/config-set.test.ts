@@ -101,6 +101,15 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('orphans.exclude_slugs');
   });
 
+  test('contains DB pacing keys', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('pace.mode');
+    expect(KNOWN_CONFIG_KEYS).toContain('pace.enabled');
+    expect(KNOWN_CONFIG_KEYS).toContain('pace.max_concurrency');
+    expect(KNOWN_CONFIG_KEYS).toContain('pace.pace_at_ms');
+    expect(KNOWN_CONFIG_KEYS).toContain('pace.max_sleep_ms');
+    expect(KNOWN_CONFIG_KEYS).toContain('pace.ewma_alpha');
+  });
+
   test('no duplicate entries', () => {
     const set = new Set(KNOWN_CONFIG_KEYS);
     expect(set.size).toBe(KNOWN_CONFIG_KEYS.length);
@@ -113,6 +122,7 @@ describe('KNOWN_CONFIG_KEY_PREFIXES', () => {
     expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('models.');
     expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('dream.');
     expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('provider_chat_options.');
+    expect(KNOWN_CONFIG_KEY_PREFIXES).toContain('pace.');
   });
 
   test('prefixes end in `.` (consistent shape)', () => {
@@ -190,6 +200,10 @@ describe('prefix vs known-key gate logic (mirrored from runConfig)', () => {
 
   test('provider_chat_options.anthropic (under prefix) → "prefix"', () => {
     expect(gate('provider_chat_options.anthropic')).toBe('prefix');
+  });
+
+  test('pace.experimental (under prefix) → "prefix"', () => {
+    expect(gate('pace.experimental')).toBe('prefix');
   });
 
   test('bug-reporter: embedding.provider → "unknown" (no prefix match)', () => {
