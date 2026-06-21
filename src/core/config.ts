@@ -1176,6 +1176,13 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // stops claiming "Nothing in gbrain reads this" for a key the resolver
   // reads on every unqualified call.
   'sources.default',
+  // DB contention pacing (v0.42.49+). Runtime readers live in pace-mode.ts.
+  'pace.mode',
+  'pace.enabled',
+  'pace.max_concurrency',
+  'pace.pace_at_ms',
+  'pace.max_sleep_ms',
+  'pace.ewma_alpha',
 ];
 
 /**
@@ -1196,6 +1203,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'autopilot.',         // autopilot.nightly_quality_probe.*, autopilot.auto_drain.* (#1685)
   'chronicle.',         // chronicle.tz + future Life Chronicle knobs (#2390)
   'self_upgrade.',      // v0.42 self-upgrade (mode, quiet_hours, state)
+  'pace.',              // DB contention pacing (pace.mode, pace.max_concurrency, etc.)
 ];
 
 /**
