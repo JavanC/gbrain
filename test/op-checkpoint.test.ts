@@ -246,6 +246,20 @@ describe('resumeFilter (pure)', () => {
 describe('BUG 3: completed_keys array-shape guard (v119 CHECK + defensive loader)', () => {
   const CONSTRAINT = 'op_checkpoints_completed_keys_array';
 
+  test('recordCompleted writes a JSON array under the v119 CHECK', async () => {
+    const key = { op: 'sync-target', fingerprint: 'fp-record-array' };
+    const ok = await recordCompleted(engine, key, ['target-commit']);
+    expect(ok).toBe(true);
+    const rows = await engine.executeRaw<{ t: string; completed_keys: unknown }>(
+      `SELECT jsonb_typeof(completed_keys) AS t, completed_keys
+         FROM op_checkpoints
+        WHERE op = $1 AND fingerprint = $2`,
+      [key.op, key.fingerprint],
+    );
+    expect(rows[0].t).toBe('array');
+    expect(rows[0].completed_keys).toEqual(['target-commit']);
+  });
+
   test('CHECK rejects a scalar completed_keys write — exactly one constraint (no blob+migration dupe)', async () => {
     // Fresh PGLite install: the schema blob ships the NAMED inline CHECK and
     // migration v119's IF NOT EXISTS skips re-adding it. Exactly one constraint.
