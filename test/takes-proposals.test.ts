@@ -311,4 +311,250 @@ describe('gbrain takes proposals', () => {
     expect(parsed.changes).toEqual([]);
     expect(parsed.skipped).toEqual([{ id: 102, status: 'accepted', page_slug: 'projects/example' }]);
   });
+
+  test('reject dry-run previews pending proposals without updating status', async () => {
+    const captured: CapturedQuery[] = [];
+    const engine = buildEngine([
+      {
+        id: 401,
+        source_id: 'javan-brain',
+        page_slug: 'projects/example',
+        proposed_at: '2026-06-06T01:02:03.000Z',
+        proposal_run_id: 'propose-run',
+        status: 'pending',
+        claim_text: 'Duplicate proposal should be rejected.',
+        kind: 'take',
+        holder: 'brain',
+        weight: 0.75,
+        domain: null,
+        model_id: 'openai:gpt-5.5',
+        predicted_brier: null,
+        predicted_brier_bucket_n: null,
+      },
+    ], captured);
+
+    const out = await captureStdout(() => runTakes(engine, [
+      'propose',
+      '--reject',
+      '401',
+      '--dry-run',
+      '--json',
+    ]));
+
+    const parsed = JSON.parse(out) as { dry_run: boolean; rejected: Array<Record<string, unknown>>; skipped: unknown[] };
+    expect(parsed.dry_run).toBe(true);
+    expect(parsed.rejected).toEqual([{
+      id: 401,
+      source_id: 'javan-brain',
+      page_slug: 'projects/example',
+      claim: 'Duplicate proposal should be rejected.',
+      status: 'pending',
+    }]);
+    expect(parsed.skipped).toEqual([]);
+    expect(captured).toHaveLength(1);
+    expect(captured[0].sql).toContain('FROM take_proposals');
+  });
+
+  test('reject updates pending proposal status', async () => {
+    const captured: CapturedQuery[] = [];
+    const proposalRow = {
+      id: 402,
+      source_id: 'javan-brain',
+      page_slug: 'projects/example',
+      proposed_at: '2026-06-06T01:02:03.000Z',
+      proposal_run_id: 'propose-run',
+      status: 'pending',
+      claim_text: 'Rejected proposal.',
+      kind: 'take',
+      holder: 'brain',
+      weight: 0.75,
+      domain: null,
+      model_id: 'openai:gpt-5.5',
+      predicted_brier: null,
+      predicted_brier_bucket_n: null,
+    };
+    const engine = {
+      executeRaw: async (sql: string, params: unknown[]) => {
+        captured.push({ sql, params });
+        if (sql.includes('FROM take_proposals')) return [proposalRow];
+        return [];
+      },
+    } as any;
+
+    const out = await captureStdout(() => runTakes(engine, [
+      'propose',
+      '--reject',
+      '402',
+      '--json',
+    ]));
+
+    const parsed = JSON.parse(out) as { dry_run: boolean; rejected: Array<Record<string, unknown>> };
+    expect(parsed.dry_run).toBe(false);
+    expect(parsed.rejected).toHaveLength(1);
+    const update = captured.find(c => c.sql.includes('UPDATE take_proposals'));
+    expect(update).toBeDefined();
+    expect(update!.sql).toContain("status = 'rejected'");
+    expect(update!.sql).toContain("acted_by = 'cli'");
+    expect(update!.params).toEqual([402]);
+  });
+
+  test('apply-review dry-run splits accept reject and pending decisions', async () => {
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-takes-proposals-'));
+    mkdirSync(join(brainDir, 'projects'), { recursive: true });
+    writeFileSync(join(brainDir, 'projects/example.md'), '# Example\n', 'utf8');
+    const reviewPath = join(brainDir, 'review.json');
+    writeFileSync(reviewPath, JSON.stringify([
+      { id: 501, recommendation: 'accept', decision: 'accept' },
+      { id: 502, recommendation: 'review', decision: 'reject' },
+      { id: 503, recommendation: 'review', decision: 'pending' },
+    ]), 'utf8');
+    const captured: CapturedQuery[] = [];
+    const rows = [
+      {
+        id: 501,
+        source_id: 'javan-brain',
+        page_slug: 'projects/example',
+        content_hash: 'abc',
+        prompt_version: 'v-test',
+        proposed_at: '2026-06-06T01:02:03.000Z',
+        proposal_run_id: 'propose-run',
+        status: 'pending',
+        claim_text: 'Accepted from review JSON.',
+        kind: 'take',
+        holder: 'brain',
+        weight: 0.75,
+        domain: null,
+        model_id: 'openai:gpt-5.5',
+        predicted_brier: null,
+        predicted_brier_bucket_n: null,
+      },
+      {
+        id: 502,
+        source_id: 'javan-brain',
+        page_slug: 'projects/example',
+        proposed_at: '2026-06-06T01:02:04.000Z',
+        proposal_run_id: 'propose-run',
+        status: 'pending',
+        claim_text: 'Rejected from review JSON.',
+        kind: 'take',
+        holder: 'brain',
+        weight: 0.7,
+        domain: null,
+        model_id: 'openai:gpt-5.5',
+        predicted_brier: null,
+        predicted_brier_bucket_n: null,
+      },
+    ];
+    const engine = {
+      executeRaw: async (sql: string, params: unknown[]) => {
+        captured.push({ sql, params });
+        if (sql.includes('FROM take_proposals') && params[0] === 501) return [rows[0]];
+        if (sql.includes('FROM take_proposals') && params[0] === 502) return [rows[1]];
+        return [];
+      },
+    } as any;
+
+    const out = await captureStdout(() => runTakes(engine, [
+      'propose',
+      '--apply-review',
+      reviewPath,
+      '--dry-run',
+      '--dir',
+      brainDir,
+      '--json',
+    ]));
+
+    const parsed = JSON.parse(out) as {
+      requested: { accept: number[]; reject: number[]; pending: number[] };
+      accept: { changes: unknown[] };
+      reject: { changes: unknown[] };
+    };
+    expect(parsed.requested).toEqual({ accept: [501], reject: [502], pending: [503] });
+    expect(parsed.accept.changes).toHaveLength(1);
+    expect(parsed.reject.changes).toHaveLength(1);
+    expect(readFileSync(join(brainDir, 'projects/example.md'), 'utf8')).not.toContain('Accepted from review JSON.');
+  });
+
+  test('apply-review writes accepted takes and rejects proposals', async () => {
+    const brainDir = mkdtempSync(join(tmpdir(), 'gbrain-takes-proposals-'));
+    mkdirSync(join(brainDir, 'projects'), { recursive: true });
+    writeFileSync(join(brainDir, 'projects/example.md'), '# Example\n', 'utf8');
+    const reviewPath = join(brainDir, 'review.json');
+    writeFileSync(reviewPath, JSON.stringify([
+      { id: 601, recommendation: 'accept', decision: 'accept' },
+      { id: 602, recommendation: 'review', decision: 'reject' },
+    ]), 'utf8');
+    const captured: CapturedQuery[] = [];
+    const addedTakes: Array<Record<string, unknown>> = [];
+    const rows = [
+      {
+        id: 601,
+        source_id: 'javan-brain',
+        page_slug: 'projects/example',
+        content_hash: 'abc',
+        prompt_version: 'v-test',
+        proposed_at: '2026-06-06T01:02:03.000Z',
+        proposal_run_id: 'propose-run',
+        status: 'pending',
+        claim_text: 'Accepted from review JSON.',
+        kind: 'take',
+        holder: 'brain',
+        weight: 0.75,
+        domain: null,
+        model_id: 'openai:gpt-5.5',
+        predicted_brier: null,
+        predicted_brier_bucket_n: null,
+      },
+      {
+        id: 602,
+        source_id: 'javan-brain',
+        page_slug: 'projects/example',
+        proposed_at: '2026-06-06T01:02:04.000Z',
+        proposal_run_id: 'propose-run',
+        status: 'pending',
+        claim_text: 'Rejected from review JSON.',
+        kind: 'take',
+        holder: 'brain',
+        weight: 0.7,
+        domain: null,
+        model_id: 'openai:gpt-5.5',
+        predicted_brier: null,
+        predicted_brier_bucket_n: null,
+      },
+    ];
+    const engine = {
+      executeRaw: async (sql: string, params: unknown[]) => {
+        captured.push({ sql, params });
+        if (sql.includes('FROM take_proposals') && params[0] === 601) return [rows[0]];
+        if (sql.includes('FROM take_proposals') && params[0] === 602) return [rows[1]];
+        if (sql.includes('FROM pages')) return [{ id: 77 }];
+        return [];
+      },
+      addTakesBatch: async (batch: Array<Record<string, unknown>>) => {
+        addedTakes.push(...batch);
+      },
+    } as any;
+
+    const out = await captureStdout(() => runTakes(engine, [
+      'propose',
+      '--apply-review',
+      reviewPath,
+      '--dir',
+      brainDir,
+      '--json',
+    ]));
+
+    const parsed = JSON.parse(out) as {
+      accept: { promoted: unknown[] };
+      reject: { rejected: unknown[] };
+    };
+    expect(parsed.accept.promoted).toHaveLength(1);
+    expect(parsed.reject.rejected).toHaveLength(1);
+    expect(readFileSync(join(brainDir, 'projects/example.md'), 'utf8')).toContain('Accepted from review JSON.');
+    expect(addedTakes).toHaveLength(1);
+    const updates = captured.filter(c => c.sql.includes('UPDATE take_proposals'));
+    expect(updates).toHaveLength(2);
+    expect(updates.some(c => c.sql.includes("status = 'accepted'"))).toBe(true);
+    expect(updates.some(c => c.sql.includes("status = 'rejected'"))).toBe(true);
+  });
 });
