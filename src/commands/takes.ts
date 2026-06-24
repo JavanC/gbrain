@@ -172,9 +172,9 @@ function ensurePositiveInt(raw: string | undefined, fallback: number, label: str
   return n;
 }
 
-function parseProposalIds(raw: string | undefined): number[] {
+function parseProposalIds(raw: string | undefined, flagName = '--accept'): number[] {
   if (!raw) {
-    console.error('Missing --accept <id[,id...]>.');
+    console.error(`Missing ${flagName} <id[,id...]>.`);
     process.exit(1);
   }
   const ids = raw.split(',').map(s => s.trim()).filter(Boolean).map((part) => {
@@ -186,10 +186,71 @@ function parseProposalIds(raw: string | undefined): number[] {
     return n;
   });
   if (ids.length === 0) {
-    console.error('Missing --accept <id[,id...]>.');
+    console.error(`Missing ${flagName} <id[,id...]>.`);
     process.exit(1);
   }
   return [...new Set(ids)];
+}
+
+type ReviewDecision = 'accept' | 'reject' | 'pending';
+
+interface TakeProposalReviewDecision {
+  id: number;
+  recommendation?: string;
+  decision: ReviewDecision;
+}
+
+interface TakeProposalRejectPreview {
+  id: number;
+  source_id: string;
+  page_slug: string;
+  claim: string;
+  status: TakeProposalStatus;
+}
+
+function parseReviewDecision(raw: unknown): ReviewDecision {
+  if (raw === 'accept' || raw === 'reject' || raw === 'pending') return raw;
+  console.error(`Invalid review decision "${String(raw)}". Expected accept, reject, or pending.`);
+  process.exit(1);
+}
+
+function loadReviewDecisions(path: string): TakeProposalReviewDecision[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (err) {
+    console.error(`Failed to read review JSON ${path}: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+  if (!Array.isArray(parsed)) {
+    console.error('Review JSON must be an array of { id, decision } objects.');
+    process.exit(1);
+  }
+  const seen = new Set<number>();
+  const decisions: TakeProposalReviewDecision[] = [];
+  for (const item of parsed) {
+    if (!item || typeof item !== 'object') {
+      console.error('Review JSON entries must be objects.');
+      process.exit(1);
+    }
+    const row = item as Record<string, unknown>;
+    const id = typeof row.id === 'number' ? row.id : parseInt(String(row.id), 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      console.error(`Invalid review proposal id "${String(row.id)}".`);
+      process.exit(1);
+    }
+    if (seen.has(id)) {
+      console.error(`Duplicate review proposal id "${id}".`);
+      process.exit(1);
+    }
+    seen.add(id);
+    decisions.push({
+      id,
+      recommendation: typeof row.recommendation === 'string' ? row.recommendation : undefined,
+      decision: parseReviewDecision(row.decision),
+    });
+  }
+  return decisions;
 }
 
 // --- Subcommands ---
@@ -330,7 +391,91 @@ async function cmdProposeAccept(engine: BrainEngine, args: string[]): Promise<vo
   const ids = parseProposalIds(flagValue(args, '--accept'));
   const dirArg = flagValue(args, '--dir');
   const brainDir = await resolveBrainDir(engine, dirArg ?? null);
+  const plan = await planAcceptProposals(engine, ids, brainDir);
 
+  if (dryRun) {
+    const result = {
+      dry_run: true,
+      requested_ids: ids,
+      missing_ids: plan.missingIds,
+      skipped: plan.skipped,
+      changes: plan.previews,
+    };
+    if (json) {
+      console.log(stringifyJson(result));
+      return;
+    }
+    if (plan.previews.length === 0) {
+      console.log(`No pending proposals would be promoted (${ids.length} requested).`);
+    } else {
+      console.log(`# Take proposal accept preview (${plan.previews.length} change${plan.previews.length === 1 ? '' : 's'})\n`);
+      for (const p of plan.previews) {
+        console.log(
+          `${p.page_slug}#${p.row_num} <= proposal #${p.id}\n` +
+          `  [${p.kind} • ${p.holder} • w=${p.weight.toFixed(2)}]\n` +
+          `  ${p.claim}\n` +
+          `  source=${p.source}\n`,
+        );
+      }
+    }
+    if (plan.missingIds.length > 0) console.log(`Missing proposal ids: ${plan.missingIds.join(', ')}`);
+    if (plan.skipped.length > 0) {
+      console.log(`Skipped: ${plan.skipped.map(s => `#${s.id}(${s.status})`).join(', ')}`);
+    }
+    return;
+  }
+
+  // --- Write path: promote pending proposals into ## Takes ---
+  if (plan.previews.length === 0) {
+    if (json) {
+      console.log(stringifyJson({ dry_run: false, requested_ids: ids, missing_ids: plan.missingIds, skipped: plan.skipped, promoted: [] }));
+    } else {
+      console.log(`No pending proposals to promote (${ids.length} requested).`);
+      if (plan.missingIds.length > 0) console.log(`Missing proposal ids: ${plan.missingIds.join(', ')}`);
+      if (plan.skipped.length > 0) console.log(`Skipped: ${plan.skipped.map(s => `#${s.id}(${s.status})`).join(', ')}`);
+    }
+    return;
+  }
+
+  const promoted = await applyAcceptPlan(engine, brainDir, plan.previews);
+
+  if (json) {
+    console.log(stringifyJson({ dry_run: false, requested_ids: ids, missing_ids: plan.missingIds, skipped: plan.skipped, promoted }));
+    return;
+  }
+  console.log(`# Promoted ${promoted.length} proposal${promoted.length === 1 ? '' : 's'}\n`);
+  for (const p of promoted) {
+    console.log(
+      `${p.page_slug}#${p.row_num} <= proposal #${p.id}\n` +
+      `  [${p.kind} • ${p.holder} • w=${p.weight.toFixed(2)}]\n` +
+      `  ${p.claim}\n`,
+    );
+  }
+  if (plan.missingIds.length > 0) console.log(`Missing proposal ids: ${plan.missingIds.join(', ')}`);
+  if (plan.skipped.length > 0) {
+    console.log(`Skipped: ${plan.skipped.map(s => `#${s.id}(${s.status})`).join(', ')}`);
+  }
+}
+
+interface TakeProposalAcceptPreview {
+  id: number;
+  source_id: string;
+  page_slug: string;
+  row_num: number;
+  claim: string;
+  kind: string;
+  holder: string;
+  weight: number;
+  source: string;
+}
+
+interface TakeProposalAcceptPlan {
+  missingIds: number[];
+  skipped: Array<{ id: number; status: TakeProposalStatus; page_slug: string }>;
+  previews: TakeProposalAcceptPreview[];
+}
+
+async function planAcceptProposals(engine: BrainEngine, ids: number[], brainDir: string): Promise<TakeProposalAcceptPlan> {
   const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
   const rows = await engine.executeRaw<TakeProposalAcceptRow>(
     `SELECT id, source_id, page_slug, content_hash, prompt_version, proposed_at,
@@ -348,17 +493,7 @@ async function cmdProposeAccept(engine: BrainEngine, args: string[]): Promise<vo
     .filter(r => r.status !== 'pending')
     .map(r => ({ id: Number(r.id), status: r.status, page_slug: r.page_slug }));
   const pendingRows = rows.filter(r => r.status === 'pending');
-  const previews: Array<{
-    id: number;
-    source_id: string;
-    page_slug: string;
-    row_num: number;
-    claim: string;
-    kind: string;
-    holder: string;
-    weight: number;
-    source: string;
-  }> = [];
+  const previews: TakeProposalAcceptPreview[] = [];
 
   for (const proposal of pendingRows) {
     const filePath = pageFilePath(brainDir, proposal.page_slug);
@@ -389,52 +524,12 @@ async function cmdProposeAccept(engine: BrainEngine, args: string[]): Promise<vo
     });
   }
 
-  if (dryRun) {
-    const result = {
-      dry_run: true,
-      requested_ids: ids,
-      missing_ids: missingIds,
-      skipped,
-      changes: previews,
-    };
-    if (json) {
-      console.log(stringifyJson(result));
-      return;
-    }
-    if (previews.length === 0) {
-      console.log(`No pending proposals would be promoted (${ids.length} requested).`);
-    } else {
-      console.log(`# Take proposal accept preview (${previews.length} change${previews.length === 1 ? '' : 's'})\n`);
-      for (const p of previews) {
-        console.log(
-          `${p.page_slug}#${p.row_num} <= proposal #${p.id}\n` +
-          `  [${p.kind} • ${p.holder} • w=${p.weight.toFixed(2)}]\n` +
-          `  ${p.claim}\n` +
-          `  source=${p.source}\n`,
-        );
-      }
-    }
-    if (missingIds.length > 0) console.log(`Missing proposal ids: ${missingIds.join(', ')}`);
-    if (skipped.length > 0) {
-      console.log(`Skipped: ${skipped.map(s => `#${s.id}(${s.status})`).join(', ')}`);
-    }
-    return;
-  }
+  return { missingIds, skipped, previews };
+}
 
-  // --- Write path: promote pending proposals into ## Takes ---
-  if (previews.length === 0) {
-    if (json) {
-      console.log(stringifyJson({ dry_run: false, requested_ids: ids, missing_ids: missingIds, skipped, promoted: [] }));
-    } else {
-      console.log(`No pending proposals to promote (${ids.length} requested).`);
-      if (missingIds.length > 0) console.log(`Missing proposal ids: ${missingIds.join(', ')}`);
-      if (skipped.length > 0) console.log(`Skipped: ${skipped.map(s => `#${s.id}(${s.status})`).join(', ')}`);
-    }
-    return;
-  }
-
-  const promoted: typeof previews = [];
-  const bySlug = new Map<string, typeof previews>();
+async function applyAcceptPlan(engine: BrainEngine, brainDir: string, previews: TakeProposalAcceptPreview[]): Promise<TakeProposalAcceptPreview[]> {
+  const promoted: TakeProposalAcceptPreview[] = [];
+  const bySlug = new Map<string, TakeProposalAcceptPreview[]>();
   for (const p of previews) {
     const arr = bySlug.get(p.page_slug) ?? [];
     arr.push(p);
@@ -468,7 +563,7 @@ async function cmdProposeAccept(engine: BrainEngine, args: string[]): Promise<vo
         await engine.executeRaw(
           `UPDATE take_proposals
               SET status = 'accepted', acted_at = now(), acted_by = 'cli', promoted_row_num = $2
-            WHERE id = $1`,
+            WHERE id = $1 AND status = 'pending'`,
           [p.id, rowNum],
         );
         promoted.push(p);
@@ -477,23 +572,174 @@ async function cmdProposeAccept(engine: BrainEngine, args: string[]): Promise<vo
       writeBody(path, body);
     });
   }
+  return promoted;
+}
 
-  if (json) {
-    console.log(stringifyJson({ dry_run: false, requested_ids: ids, missing_ids: missingIds, skipped, promoted }));
+async function cmdProposeReject(engine: BrainEngine, args: string[]): Promise<void> {
+  const dryRun = flagPresent(args, '--dry-run');
+  const json = flagPresent(args, '--json');
+  const ids = parseProposalIds(flagValue(args, '--reject'), '--reject');
+  const plan = await planRejectProposals(engine, ids);
+
+  if (dryRun) {
+    const result = { dry_run: true, requested_ids: ids, missing_ids: plan.missingIds, skipped: plan.skipped, rejected: plan.previews };
+    if (json) {
+      console.log(stringifyJson(result));
+      return;
+    }
+    printRejectPreview(plan.previews, ids.length);
+    if (plan.missingIds.length > 0) console.log(`Missing proposal ids: ${plan.missingIds.join(', ')}`);
+    if (plan.skipped.length > 0) console.log(`Skipped: ${plan.skipped.map(s => `#${s.id}(${s.status})`).join(', ')}`);
     return;
   }
-  console.log(`# Promoted ${promoted.length} proposal${promoted.length === 1 ? '' : 's'}\n`);
-  for (const p of promoted) {
-    console.log(
-      `${p.page_slug}#${p.row_num} <= proposal #${p.id}\n` +
-      `  [${p.kind} • ${p.holder} • w=${p.weight.toFixed(2)}]\n` +
-      `  ${p.claim}\n`,
-    );
+
+  const rejected = await applyRejectPlan(engine, plan.previews);
+  if (json) {
+    console.log(stringifyJson({ dry_run: false, requested_ids: ids, missing_ids: plan.missingIds, skipped: plan.skipped, rejected }));
+    return;
   }
-  if (missingIds.length > 0) console.log(`Missing proposal ids: ${missingIds.join(', ')}`);
-  if (skipped.length > 0) {
-    console.log(`Skipped: ${skipped.map(s => `#${s.id}(${s.status})`).join(', ')}`);
+  console.log(`# Rejected ${rejected.length} proposal${rejected.length === 1 ? '' : 's'}\n`);
+  for (const p of rejected) {
+    console.log(`${p.page_slug} <= proposal #${p.id}\n  ${p.claim}\n`);
   }
+  if (plan.missingIds.length > 0) console.log(`Missing proposal ids: ${plan.missingIds.join(', ')}`);
+  if (plan.skipped.length > 0) console.log(`Skipped: ${plan.skipped.map(s => `#${s.id}(${s.status})`).join(', ')}`);
+}
+
+async function planRejectProposals(engine: BrainEngine, ids: number[]): Promise<{
+  missingIds: number[];
+  skipped: Array<{ id: number; status: TakeProposalStatus; page_slug: string }>;
+  previews: TakeProposalRejectPreview[];
+}> {
+  const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+  const rows = await engine.executeRaw<TakeProposalReviewRow>(
+    `SELECT id, source_id, page_slug, proposed_at, proposal_run_id, status,
+            claim_text, kind, holder, weight, domain, model_id,
+            predicted_brier, predicted_brier_bucket_n
+       FROM take_proposals
+      WHERE id IN (${placeholders})
+      ORDER BY page_slug ASC, id ASC`,
+    ids,
+  );
+  const foundIds = new Set(rows.map(r => Number(r.id)));
+  const missingIds = ids.filter(id => !foundIds.has(id));
+  const skipped = rows
+    .filter(r => r.status !== 'pending')
+    .map(r => ({ id: Number(r.id), status: r.status, page_slug: r.page_slug }));
+  const previews = rows
+    .filter(r => r.status === 'pending')
+    .map(r => ({
+      id: Number(r.id),
+      source_id: r.source_id,
+      page_slug: r.page_slug,
+      claim: r.claim_text,
+      status: r.status,
+    }));
+  return { missingIds, skipped, previews };
+}
+
+async function applyRejectPlan(engine: BrainEngine, previews: TakeProposalRejectPreview[]): Promise<TakeProposalRejectPreview[]> {
+  if (previews.length === 0) return [];
+  const ids = previews.map(p => p.id);
+  const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
+  await engine.executeRaw(
+    `UPDATE take_proposals
+        SET status = 'rejected', acted_at = now(), acted_by = 'cli'
+      WHERE id IN (${placeholders}) AND status = 'pending'`,
+    ids,
+  );
+  return previews;
+}
+
+function printRejectPreview(previews: TakeProposalRejectPreview[], requestedCount: number): void {
+  if (previews.length === 0) {
+    console.log(`No pending proposals would be rejected (${requestedCount} requested).`);
+    return;
+  }
+  console.log(`# Take proposal reject preview (${previews.length} change${previews.length === 1 ? '' : 's'})\n`);
+  for (const p of previews) {
+    console.log(`${p.page_slug} <= proposal #${p.id}\n  ${p.claim}\n`);
+  }
+}
+
+async function cmdProposeApplyReview(engine: BrainEngine, args: string[]): Promise<void> {
+  const dryRun = flagPresent(args, '--dry-run');
+  const json = flagPresent(args, '--json');
+  const reviewPath = flagValue(args, '--apply-review');
+  if (!reviewPath) {
+    console.error('Missing --apply-review <file.json>.');
+    process.exit(1);
+  }
+  const decisions = loadReviewDecisions(reviewPath);
+  const acceptIds = decisions.filter(d => d.decision === 'accept').map(d => d.id);
+  const rejectIds = decisions.filter(d => d.decision === 'reject').map(d => d.id);
+  const pendingIds = decisions.filter(d => d.decision === 'pending').map(d => d.id);
+  const dirArg = flagValue(args, '--dir');
+  const brainDir = await resolveBrainDir(engine, dirArg ?? null);
+
+  const acceptPlan = acceptIds.length > 0
+    ? await planAcceptProposals(engine, acceptIds, brainDir)
+    : { missingIds: [], skipped: [], previews: [] };
+  const rejectPlan = rejectIds.length > 0
+    ? await planRejectProposals(engine, rejectIds)
+    : { missingIds: [], skipped: [], previews: [] };
+
+  if (dryRun) {
+    const result = {
+      dry_run: true,
+      requested: { accept: acceptIds, reject: rejectIds, pending: pendingIds },
+      accept: { missing_ids: acceptPlan.missingIds, skipped: acceptPlan.skipped, changes: acceptPlan.previews },
+      reject: { missing_ids: rejectPlan.missingIds, skipped: rejectPlan.skipped, changes: rejectPlan.previews },
+    };
+    if (json) {
+      console.log(stringifyJson(result));
+      return;
+    }
+    printApplyReviewPreview(result);
+    return;
+  }
+
+  const promoted = await applyAcceptPlan(engine, brainDir, acceptPlan.previews);
+  const rejected = await applyRejectPlan(engine, rejectPlan.previews);
+  const result = {
+    dry_run: false,
+    requested: { accept: acceptIds, reject: rejectIds, pending: pendingIds },
+    accept: { missing_ids: acceptPlan.missingIds, skipped: acceptPlan.skipped, promoted },
+    reject: { missing_ids: rejectPlan.missingIds, skipped: rejectPlan.skipped, rejected },
+  };
+  if (json) {
+    console.log(stringifyJson(result));
+    return;
+  }
+  console.log(`# Applied take proposal review\n`);
+  console.log(`Accepted: ${promoted.length}`);
+  console.log(`Rejected: ${rejected.length}`);
+  if (pendingIds.length > 0) console.log(`Left pending: ${pendingIds.join(', ')}`);
+  const missing = [...acceptPlan.missingIds, ...rejectPlan.missingIds];
+  if (missing.length > 0) console.log(`Missing proposal ids: ${missing.join(', ')}`);
+  const skipped = [...acceptPlan.skipped, ...rejectPlan.skipped];
+  if (skipped.length > 0) console.log(`Skipped: ${skipped.map(s => `#${s.id}(${s.status})`).join(', ')}`);
+}
+
+function printApplyReviewPreview(result: {
+  requested: { accept: number[]; reject: number[]; pending: number[] };
+  accept: { changes: TakeProposalAcceptPreview[]; missing_ids: number[]; skipped: Array<{ id: number; status: TakeProposalStatus; page_slug: string }> };
+  reject: { changes: TakeProposalRejectPreview[]; missing_ids: number[]; skipped: Array<{ id: number; status: TakeProposalStatus; page_slug: string }> };
+}): void {
+  console.log(`# Take proposal review preview\n`);
+  console.log(`Accept: ${result.accept.changes.length}/${result.requested.accept.length}`);
+  for (const p of result.accept.changes) {
+    console.log(`  ${p.page_slug}#${p.row_num} <= proposal #${p.id}\n    ${p.claim}`);
+  }
+  console.log(`Reject: ${result.reject.changes.length}/${result.requested.reject.length}`);
+  for (const p of result.reject.changes) {
+    console.log(`  ${p.page_slug} <= proposal #${p.id}\n    ${p.claim}`);
+  }
+  if (result.requested.pending.length > 0) console.log(`Left pending: ${result.requested.pending.join(', ')}`);
+  const missing = [...result.accept.missing_ids, ...result.reject.missing_ids];
+  if (missing.length > 0) console.log(`Missing proposal ids: ${missing.join(', ')}`);
+  const skipped = [...result.accept.skipped, ...result.reject.skipped];
+  if (skipped.length > 0) console.log(`Skipped: ${skipped.map(s => `#${s.id}(${s.status})`).join(', ')}`);
 }
 
 async function cmdAdd(engine: BrainEngine, args: string[], sourceId?: string): Promise<void> {
@@ -871,6 +1117,10 @@ Subcommands:
   takes propose --accept <id[,id...]> [--dry-run] [--dir <path>] [--json]
                                           Promote pending proposals into ## Takes (markdown + DB)
                                           --dry-run previews without writing
+  takes propose --reject <id[,id...]> [--dry-run] [--json]
+                                          Mark pending proposals rejected without touching markdown
+  takes propose --apply-review <file.json> [--dry-run] [--dir <path>] [--json]
+                                          Apply exported review decisions ({id, decision})
   takes add <slug> --claim "..." --kind <fact|take|bet|hunch> --who <holder>
                    [--weight 0.5] [--source "..."] [--since YYYY-MM]
                                           Append a take (markdown + DB)
@@ -903,6 +1153,8 @@ Common flags:
     case 'propose':
       if (rest.includes('--review')) return cmdProposals(engine, rest.filter(a => a !== '--review'));
       if (rest.includes('--accept')) return cmdProposeAccept(engine, rest);
+      if (rest.includes('--reject')) return cmdProposeReject(engine, rest);
+      if (rest.includes('--apply-review')) return cmdProposeApplyReview(engine, rest);
       console.error('Usage: gbrain takes propose --review [same flags as proposals]');
       process.exit(1);
     case 'add':         return cmdAdd(engine, rest, await resolveTakesSourceId(engine));
