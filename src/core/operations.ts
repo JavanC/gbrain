@@ -938,6 +938,11 @@ const put_page: Operation = {
       | { skipped: 'remote' }
       | undefined;
     let autoTimeline: { created: number } | { error: string } | { skipped: 'remote' } | undefined;
+    let asyncEnrichment:
+      | { queued: true; job_id: number }
+      | { skipped: 'disabled' | 'no_parsed_page' }
+      | { error: string }
+      | undefined;
     // Trusted-workspace path (v0.23 dream cycle) re-enables auto-link/timeline
     // even though ctx.remote=true, because the allow-list bounds the slug and
     // the synthesis prompt is itself the trusted dispatcher. Without this,
@@ -950,6 +955,26 @@ const put_page: Operation = {
     if (ctx.remote !== false && !trustedWorkspace) {
       autoLinks = { skipped: 'remote' };
       autoTimeline = { skipped: 'remote' };
+      if (result.parsedPage) {
+        try {
+          const {
+            isAsyncPostWriteEnrichmentEnabled,
+            submitPostWriteEnrichment,
+          } = await import('./post-write-enrichment-submit.ts');
+          if (await isAsyncPostWriteEnrichmentEnabled(ctx.engine)) {
+            asyncEnrichment = await submitPostWriteEnrichment(ctx.engine, {
+              slug: result.slug,
+              sourceId: ctx.sourceId ?? 'default',
+            });
+          } else {
+            asyncEnrichment = { skipped: 'disabled' };
+          }
+        } catch (e) {
+          asyncEnrichment = { error: e instanceof Error ? e.message : String(e) };
+        }
+      } else {
+        asyncEnrichment = { skipped: 'no_parsed_page' };
+      }
     } else if (result.parsedPage) {
       try {
         const enabled = await isAutoLinkEnabled(ctx.engine);
@@ -1061,6 +1086,7 @@ const put_page: Operation = {
       chunks: result.chunks,
       ...(autoLinks ? { auto_links: autoLinks } : {}),
       ...(autoTimeline ? { auto_timeline: autoTimeline } : {}),
+      ...(asyncEnrichment ? { async_enrichment: asyncEnrichment } : {}),
       ...(writerLint ? { writer_lint: writerLint } : {}),
       ...(factsQueued ? { facts_backstop: factsQueued } : {}),
       ...(writeThrough ? { write_through: writeThrough } : {}),
@@ -1083,7 +1109,7 @@ const put_page: Operation = {
  * counted; the overall function never throws (catch in put_page handler covers
  * extraction errors).
  */
-async function runAutoLink(
+export async function runAutoLink(
   engine: BrainEngine,
   slug: string,
   parsed: { type: PageType; compiled_truth: string; timeline: string; frontmatter: Record<string, unknown> },

@@ -37,6 +37,7 @@ describe('registerBuiltinHandlers', () => {
     expect(names).toContain('embed');
     expect(names).toContain('lint');
     expect(names).toContain('import');
+    expect(names).toContain('post-write-enrichment');
     // New in v0.11.1 (Tier 1 + autopilot-cycle)
     expect(names).toContain('extract');
     expect(names).toContain('backlinks');
