@@ -16,7 +16,7 @@ function remoteCtx(): OperationContext {
     logger: { info: () => {}, warn: () => {}, error: () => {} },
     dryRun: false,
     remote: true,
-    sourceId: 'default',
+    sourceId: 'alpha',
   };
 }
 
@@ -33,13 +33,18 @@ beforeEach(async () => {
   await engine.setConfig('auto_link', 'true');
   await engine.setConfig('auto_timeline', 'true');
   await engine.setConfig('writer.async_enrichment', 'true');
+  await engine.executeRaw(
+    `INSERT INTO sources (id, name, local_path)
+     VALUES ('alpha', 'alpha', '/tmp/alpha')
+     ON CONFLICT (id) DO NOTHING`,
+  );
   await engine.putPage('concepts/async-enrich-target', {
     type: 'concept',
     title: 'Target',
     compiled_truth: 'Target body',
     timeline: '',
     frontmatter: {},
-  }, { sourceId: 'default' });
+  }, { sourceId: 'alpha' });
 });
 
 afterAll(async () => {
@@ -77,7 +82,7 @@ describe('remote put_page asynchronous enrichment', () => {
     expect(queued).toMatchObject({
       name: 'post-write-enrichment',
       status: 'waiting',
-      data: { slug: 'concepts/async-enrich-source', sourceId: 'default' },
+      data: { slug: 'concepts/async-enrich-source', sourceId: 'alpha' },
     });
 
     const worker = new MinionWorker(engine, { queue: 'test' });
@@ -99,9 +104,9 @@ describe('remote put_page asynchronous enrichment', () => {
 
     expect(enriched.auto_links.created).toBeGreaterThanOrEqual(0);
     expect(enriched.auto_timeline.created).toBe(1);
-    expect((await engine.getLinks('concepts/async-enrich-source', { sourceId: 'default' }))
+    expect((await engine.getLinks('concepts/async-enrich-source', { sourceId: 'alpha' }))
       .map((link) => link.to_slug)).toContain('concepts/async-enrich-target');
-    expect((await engine.getTimeline('concepts/async-enrich-source', { sourceId: 'default' }))
+    expect((await engine.getTimeline('concepts/async-enrich-source', { sourceId: 'alpha' }))
       .map((entry) => entry.summary)).toContain('Async enrichment shipped.');
   });
 

@@ -58,6 +58,7 @@ export async function runPostWriteEnrichment(
       date: entry.date,
       summary: entry.summary,
       detail: entry.detail || '',
+      source_id: input.sourceId,
     }));
     result.auto_timeline = {
       created: batch.length > 0
