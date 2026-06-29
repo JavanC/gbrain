@@ -103,6 +103,7 @@ describe('KNOWN_CONFIG_KEYS', () => {
 
   test('contains DB pacing keys', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('pace.mode');
+    expect(KNOWN_CONFIG_KEYS).toContain('writer.async_enrichment');
     expect(KNOWN_CONFIG_KEYS).toContain('pace.enabled');
     expect(KNOWN_CONFIG_KEYS).toContain('pace.max_concurrency');
     expect(KNOWN_CONFIG_KEYS).toContain('pace.pace_at_ms');

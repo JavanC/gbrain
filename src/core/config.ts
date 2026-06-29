@@ -1159,6 +1159,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Misc
   'artifacts_sync_mode',
   'cross_project_learnings',
+  // Remote put_page post-write enrichment. Opt-in because it requires a
+  // persistent Minions worker to consume the durable queue.
+  'writer.async_enrichment',
   // Link resolution (issue #972)
   'link_resolution',
   'link_resolution.global_basename',
