@@ -276,7 +276,8 @@ export async function runMaintenanceSweep(
   return report;
 }
 
-interface PassCtx {
+/** Exported for the fork's post-write-enrichment job (post-write-enrichment.ts). */
+export interface PassCtx {
   sourceId: string;
   batchLimit: number;
   overBudget: () => boolean;
@@ -292,7 +293,7 @@ interface PassCtx {
  * stampExtracted advancing the links_extracted_at watermark (both kinds
  * run here, so stamping is correct per extract.ts's C3/D6 rule).
  */
-async function runLinksTimelinePass(
+export async function runLinksTimelinePass(
   engine: BrainEngine,
   ctx: PassCtx & { cutoffIso: string },
 ): Promise<void> {

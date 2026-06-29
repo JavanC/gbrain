@@ -1,4 +1,5 @@
 import { applyMutationWritePolicy, isGatedOperation, writePolicyRefusalResponse } from '../write-policy/mutation-gate.ts';
+import { withPostWriteEnrichment } from '../post-write-enrichment-submit.ts';
 import { randomUUID } from 'node:crypto';
 import { fenceNormalizedNotice, type FencesNormalized } from '../fence-repair/report.ts';
 import { parseFenceRepairReceipt } from '../fence-repair/receipt.ts';
@@ -160,11 +161,13 @@ export async function submitPageMutation(ctx: OperationContext,
   let prepared: Awaited<ReturnType<typeof preparePageAdmission>>;
   try { prepared = await preparePageAdmission(ctx, { ...input, params }); }
   catch (error) { return writePolicyRefusalResponse(error); } // Fork: a policy refusal is a response.
-  if (prepared.prior) return pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs()));
+  if (prepared.prior) return withPostWriteEnrichment(ctx, input.operation, prepared.prior, // Fork: replay reports, never re-queues
+    pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs())), true);
   const row = await admitWrite(ctx.engine, prepared.admission);
   const response = pendingAwareResponse(ctx, await waitForWrite(ctx.engine, row, ctx.config, waitMs()));
   emitFenceNotice(ctx, response, row.slug);
-  return { ...response, ...(prepared.typeWarning ? { type_warning: prepared.typeWarning } : {}), ...(prepared.slugAdvisory ? { slug_advisory: prepared.slugAdvisory } : {}) };
+  return withPostWriteEnrichment(ctx, input.operation, row, // Fork: queue remote link/timeline enrichment
+    { ...response, ...(prepared.typeWarning ? { type_warning: prepared.typeWarning } : {}), ...(prepared.slugAdvisory ? { slug_advisory: prepared.slugAdvisory } : {}) }, false);
 }
 
 /**
