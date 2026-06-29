@@ -25,13 +25,18 @@ describeE2E('post-write enrichment queue on Postgres', () => {
     await engine.setConfig('auto_link', 'true');
     await engine.setConfig('auto_timeline', 'true');
     await engine.setConfig('writer.async_enrichment', 'true');
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path)
+       VALUES ('alpha', 'alpha', '/tmp/alpha')
+       ON CONFLICT (id) DO NOTHING`,
+    );
     await engine.putPage('concepts/async-pg-target', {
       type: 'concept',
       title: 'Target',
       compiled_truth: 'Target body',
       timeline: '',
       frontmatter: {},
-    }, { sourceId: 'default' });
+    }, { sourceId: 'alpha' });
 
     const ctx: OperationContext = {
       engine,
@@ -39,7 +44,7 @@ describeE2E('post-write enrichment queue on Postgres', () => {
       logger: { info: () => {}, warn: () => {}, error: () => {} },
       dryRun: false,
       remote: true,
-      sourceId: 'default',
+      sourceId: 'alpha',
     };
     const result = await putPage.handler(ctx, {
       slug: 'concepts/async-pg-source',
@@ -71,9 +76,9 @@ describeE2E('post-write enrichment queue on Postgres', () => {
       updateProgress: async () => {},
     });
 
-    expect((await engine.getLinks('concepts/async-pg-source', { sourceId: 'default' }))
+    expect((await engine.getLinks('concepts/async-pg-source', { sourceId: 'alpha' }))
       .map((link) => link.to_slug)).toContain('concepts/async-pg-target');
-    expect((await engine.getTimeline('concepts/async-pg-source', { sourceId: 'default' }))
+    expect((await engine.getTimeline('concepts/async-pg-source', { sourceId: 'alpha' }))
       .map((entry) => entry.summary)).toContain('Postgres async enrichment shipped.');
   }, 30_000);
 });
