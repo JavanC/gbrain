@@ -113,6 +113,13 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('orphans.exclude_slugs');
   });
 
+  test('contains the async post-write enrichment key', () => {
+    // pace.* keys are covered by the 'pace.' entry in KNOWN_CONFIG_KEY_PREFIXES
+    // upstream (PR #4195, v0.46.25.0) — no longer registered individually here.
+    expect(KNOWN_CONFIG_KEYS).toContain('writer.async_enrichment');
+  });
+
+
   test('no duplicate entries', () => {
     const set = new Set(KNOWN_CONFIG_KEYS);
     expect(set.size).toBe(KNOWN_CONFIG_KEYS.length);
