@@ -1,4 +1,5 @@
 import { applyMutationWritePolicy, isGatedOperation, writePolicyRefusalResponse } from '../write-policy/mutation-gate.ts';
+import { withPostWriteEnrichment } from '../post-write-enrichment-submit.ts';
 import { randomUUID } from 'node:crypto';
 import { pageQuarantinedNotice } from '../quarantine.ts';
 import { fenceNormalizedNotice, type FencesNormalized } from '../fence-repair/report.ts';
@@ -230,7 +231,8 @@ export async function submitPageMutation(ctx: OperationContext,
   let prepared: Awaited<ReturnType<typeof preparePageAdmission>>;
   try { prepared = await preparePageAdmission(cached ? { ...ctx, engine: cached } : ctx, { ...input, params }); }
   catch (error) { return writePolicyRefusalResponse(error); } // Fork: a policy refusal is a response.
-  if (prepared.prior) return withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs())), false));
+  if (prepared.prior) return withPostWriteEnrichment(ctx, input.operation, prepared.prior, // Fork: replay reports, never re-queues
+      await withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs())), false)), true);
   const brainId = cached ? cachedPreadmitBrain(ctx.engine) : undefined;
   // Phase 4.4: the admission transaction runs on the warm single-write lane when it is free.
   const admit = (admission: WriteAdmission) => onPersistenceLane(ctx.engine, transaction => admitWrite(ctx.engine, admission, undefined, transaction),
@@ -242,12 +244,14 @@ export async function submitPageMutation(ctx: OperationContext,
     dropPreadmitCache(ctx.engine);
     try { prepared = await preparePageAdmission(ctx, { ...input, params: { ...params, request_id: prepared.admission.requestId } }); }
     catch (retryError) { return writePolicyRefusalResponse(retryError); } // Fork: a policy refusal is a response.
-    if (prepared.prior) return withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs())), false));
+    if (prepared.prior) return withPostWriteEnrichment(ctx, input.operation, prepared.prior, // Fork: replay reports, never re-queues
+      await withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs())), false)), true);
     row = await admit(prepared.admission);
   }
   const response = await withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, row, ctx.config, waitMs())), false));
   emitFenceNotice(ctx, response, row.slug);
-  return { ...response, ...(prepared.typeWarning ? { type_warning: prepared.typeWarning } : {}), ...(prepared.slugAdvisory ? { slug_advisory: prepared.slugAdvisory } : {}) };
+  return withPostWriteEnrichment(ctx, input.operation, row, // Fork: queue remote link/timeline enrichment
+    { ...response, ...(prepared.typeWarning ? { type_warning: prepared.typeWarning } : {}), ...(prepared.slugAdvisory ? { slug_advisory: prepared.slugAdvisory } : {}) }, false);
 }
 
 /**
