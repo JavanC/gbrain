@@ -1,4 +1,5 @@
 import { isGatedOperation, runMutationWritePolicy } from '../write-policy/mutation-gate.ts';
+import { queuePostWriteEnrichment } from '../post-write-enrichment-submit.ts';
 import { randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -136,5 +137,22 @@ export async function submitPageMutation(ctx: OperationContext,
   const row = await admitWrite(ctx.engine, { principal, operation: input.operation, sourceId, sourceIncarnation: source.incarnation,
     slug, pageId: snapshot?.page.id ?? null, requestId, callerIntent, intent, authority,
     worktreeId: writeThrough ? binding?.worktree_id : null, topologyGeneration: writeThrough ? binding?.topology_generation : null });
-  return writeResponse(await waitForWrite(ctx.engine, row, ctx.config, input.waitMs));
+  const response = writeResponse(await waitForWrite(ctx.engine, row, ctx.config, input.waitMs));
+
+  // --- Fork: durable post-write enrichment for untrusted writes -------------
+  //
+  // Upstream skips inline link/timeline extraction for remote writers
+  // (page-prepare.ts gates prepareAutomaticLinks on
+  // `authority.autoLinkTrusted ?? !authority.remote`) and emits only a hint
+  // advisory. The graph would therefore never compound from agent writes on
+  // an HTTP-served brain. Queue the work out-of-band instead, so the write
+  // stays fast and untrusted content still reaches the graph through the
+  // same durable job machinery every other backfill uses.
+  //
+  // Fail-open by construction: any error here is reported in the response,
+  // never raised — the page is already durably written at this point.
+  if (ctx.remote !== false && isGatedOperation(input.operation) && !response.error) {
+    response.async_enrichment = await queuePostWriteEnrichment(ctx, sourceId, slug);
+  }
+  return response;
 }
