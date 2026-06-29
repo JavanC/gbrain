@@ -2089,6 +2089,16 @@ export async function registerBuiltinHandlers(
   // terminal with "shell handler registered…" lines. The real `jobs work` path
   // omits opts and prints as before.
   const quiet = opts?.quiet === true;
+  worker.register('post-write-enrichment', async (job) => {
+    const slug = typeof job.data.slug === 'string' ? job.data.slug : '';
+    const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : '';
+    if (!slug || !sourceId) {
+      throw new Error('post-write-enrichment requires data.slug and data.sourceId');
+    }
+    const { runPostWriteEnrichment } = await import('../core/post-write-enrichment.ts');
+    return runPostWriteEnrichment(engine, { slug, sourceId });
+  });
+
   worker.register('sync', async (job) => {
     const { performSync } = await import('./sync.ts');
     const repoPath = typeof job.data.repoPath === 'string' ? job.data.repoPath : undefined;
