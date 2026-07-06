@@ -548,6 +548,11 @@ export interface ExtractOpts {
    */
   slugs?: string[];
   /**
+   * Source owning `dir` when the incremental cycle path supplies `slugs`.
+   * Required for source-correct edge writes and extraction watermark stamps.
+   */
+  sourceId?: string;
+  /**
    * v0.41.15.0 (D9): in-process parallel file workers for the fs-walk
    * loops. Default 1. PGLite engines clamp to 1 (single-writer; though
    * extract is mostly CPU-bound, the DB batch flush still hits the
@@ -1025,6 +1030,7 @@ async function extractForSlugs(
   let linksCreated = 0;
   let timelineCreated = 0;
   let pagesProcessed = 0;
+  const processedRefs: Array<{ slug: string; source_id: string }> = [];
 
   // Issue #972: read the basename flag once per extract run.
   const globalBasename = await isGlobalBasenameEnabled(engine);
@@ -1113,6 +1119,7 @@ async function extractForSlugs(
         }
 
         pagesProcessed++;
+        if (!dryRun && sourceId) processedRefs.push({ slug, source_id: sourceId });
       } catch { /* skip unreadable */ }
       progress.tick(1);
     },
@@ -1120,6 +1127,13 @@ async function extractForSlugs(
 
   await flushLinks();
   await flushTimeline();
+  // #1696 follow-up: the Dream cycle disables sync's inline extraction and
+  // routes changed slugs through this incremental path. Stamp only after BOTH
+  // link and timeline batches flush; otherwise successfully processed pages
+  // remain permanently visible to `extract --stale` / doctor.
+  if (!dryRun && mode === 'all' && processedRefs.length > 0) {
+    await stampExtracted(engine, processedRefs);
+  }
   progress.finish();
 
   if (!jsonMode) {
