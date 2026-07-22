@@ -90,6 +90,46 @@ describe('runExtractCore — incremental cycle path (#417)', () => {
     expect(await engine.countStalePagesForExtraction({ sourceId: 'repo-a' })).toBe(0);
   });
 
+  test('Dream incremental all-mode does not stamp when a batch flush fails', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path) VALUES ($1, $2, $3)`,
+      ['repo-a', 'repo-a', tempDir],
+    );
+    for (const slug of ['people/alice-example', 'people/bob-example']) {
+      await engine.putPage(slug, {
+        type: 'person',
+        title: slug,
+        compiled_truth: `# ${slug}`,
+        timeline: '',
+        frontmatter: {},
+        content_hash: 'h',
+      }, { sourceId: 'repo-a' });
+    }
+    writeFileSync(join(tempDir, 'people/alice-example.md'), '# alice\n\n[[people/bob-example]]');
+    writeFileSync(join(tempDir, 'people/bob-example.md'), '# bob');
+
+    const failingEngine = new Proxy(engine as unknown as BrainEngine, {
+      get(target, prop, receiver) {
+        if (prop === 'addLinksBatch') return async () => { throw new Error('simulated link flush failure'); };
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    await runExtractCore(failingEngine, {
+      mode: 'all',
+      dir: tempDir,
+      slugs: ['people/alice-example'],
+      sourceId: 'repo-a',
+    });
+
+    const rows = await engine.executeRaw<{ links_extracted_at: string | null }>(
+      `SELECT links_extracted_at FROM pages WHERE slug = $1 AND source_id = $2`,
+      ['people/alice-example', 'repo-a'],
+    );
+    expect(rows[0]?.links_extracted_at).toBeNull();
+    expect(await engine.countStalePagesForExtraction({ sourceId: 'repo-a' })).toBe(2);
+  });
+
   test('1. slugs: [] returns immediately with zero counts (early-return path)', async () => {
     await seedPage('people/alice-example', '# alice');
     const result = await runExtractCore(engine as unknown as BrainEngine, {

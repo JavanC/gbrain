@@ -366,13 +366,8 @@ class ProposeTakesPhase extends BaseCyclePhase {
     const promptVersion = opts.promptVersion ?? PROPOSE_TAKES_PROMPT_VERSION;
     const pageLimit = opts.pageLimit ?? 100;
     const skipPagesWithFence = opts.skipPagesWithFence ?? false;
-    const { resolveModel } = await import('../model-config.ts');
-    const resolvedModel = await resolveModel(engine, {
-      cliFlag: opts.model,
-      configKey: 'models.dream.propose_takes',
-      tier: 'reasoning',
-      fallback: 'claude-sonnet-4-6',
-    });
+    const configuredPhaseModel = opts.model ?? await engine.getConfig('models.dream.propose_takes');
+    const resolvedModel = configuredPhaseModel || getChatModel();
     const proposalRunId = `propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${randomUUID().slice(0, 8)}`;
 
     const result: ProposeTakesResult = {

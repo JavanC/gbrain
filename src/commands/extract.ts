@@ -548,11 +548,6 @@ export interface ExtractOpts {
    */
   slugs?: string[];
   /**
-   * Source owning `dir` when the incremental cycle path supplies `slugs`.
-   * Required for source-correct edge writes and extraction watermark stamps.
-   */
-  sourceId?: string;
-  /**
    * v0.41.15.0 (D9): in-process parallel file workers for the fs-walk
    * loops. Default 1. PGLite engines clamp to 1 (single-writer; though
    * extract is mostly CPU-bound, the DB batch flush still hits the
@@ -1030,6 +1025,7 @@ async function extractForSlugs(
   let linksCreated = 0;
   let timelineCreated = 0;
   let pagesProcessed = 0;
+  let batchFlushFailed = false;
   const processedRefs: Array<{ slug: string; source_id: string }> = [];
 
   // Issue #972: read the basename flag once per extract run.
@@ -1051,6 +1047,7 @@ async function extractForSlugs(
       // log-and-continue contract for exhausted retries.
       linksCreated += await engine.addLinksBatch(snapshot, { auditSite: 'extract.links_inc' }); // gbrain-allow-direct-insert: gbrain extract command — canonical link reconciliation from markdown body
     } catch (e) {
+      batchFlushFailed = true;
       const msg = e instanceof Error ? e.message : String(e);
       if (!jsonMode) console.error(`  link batch error (${snapshot.length} rows lost): ${msg}`);
     }
@@ -1063,6 +1060,7 @@ async function extractForSlugs(
     try {
       timelineCreated += await engine.addTimelineEntriesBatch(snapshot, { auditSite: 'extract.timeline_inc' });
     } catch (e) {
+      batchFlushFailed = true;
       const msg = e instanceof Error ? e.message : String(e);
       if (!jsonMode) console.error(`  timeline batch error (${snapshot.length} rows lost): ${msg}`);
     }
@@ -1131,7 +1129,7 @@ async function extractForSlugs(
   // routes changed slugs through this incremental path. Stamp only after BOTH
   // link and timeline batches flush; otherwise successfully processed pages
   // remain permanently visible to `extract --stale` / doctor.
-  if (!dryRun && mode === 'all' && processedRefs.length > 0) {
+  if (!dryRun && mode === 'all' && !batchFlushFailed && processedRefs.length > 0) {
     await stampExtracted(engine, processedRefs);
   }
   progress.finish();

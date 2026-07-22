@@ -1020,7 +1020,6 @@ async function runPhaseExtract(
       mode: 'all',
       dir: brainDir,
       slugs: changedSlugs,  // undefined = full walk (first run / manual)
-      sourceId,
       signal,
       sourceId,
     });
