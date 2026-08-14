@@ -1,3 +1,4 @@
+import { applyMutationWritePolicy, isGatedOperation, writePolicyRefusalResponse } from '../write-policy/mutation-gate.ts';
 import { randomUUID } from 'node:crypto';
 import { pageQuarantinedNotice } from '../quarantine.ts';
 import { fenceNormalizedNotice, type FencesNormalized } from '../fence-repair/report.ts';
@@ -214,7 +215,7 @@ const OWNER_FILE_INTENTS: ReadonlySet<string> = new Set(['managed_file_import', 
 export interface PageBatchMember { id: string; index: number; size: number; requestId: string; repeats?: number[] }
 
 export async function submitPageMutation(ctx: OperationContext,
-  input: { operation: string; params: Record<string, unknown>; waitMs?: number; managedFileImport?: true; timelineSection?: TimelineSection; databaseOnly?: 'overwrite_restore' | 'detached';
+  input: { operation: string; params: Record<string, unknown>; waitMs?: number; managedFileImport?: true; timelineSection?: TimelineSection; databaseOnly?: 'overwrite_restore' | 'detached'; writePolicy?: true;
     /** commit_page_upload: `params.body_ref` names the caller's sealed upload session (persistence/page-upload.ts). */
     stagedBody?: true }): Promise<Record<string, unknown>> {
   assertPersistenceAccepting(ctx.engine);
@@ -226,7 +227,9 @@ export async function submitPageMutation(ctx: OperationContext,
   // Phase 4.2: pre-admission reads that admission rechecks come from this process's cache; a refusal the
   // cache could explain drops it and prepares the write once more, uncached, so it ends as it would without it.
   const cached = await preadmitReads(ctx.engine);
-  let prepared = await preparePageAdmission(cached ? { ...ctx, engine: cached } : ctx, { ...input, params });
+  let prepared: Awaited<ReturnType<typeof preparePageAdmission>>;
+  try { prepared = await preparePageAdmission(cached ? { ...ctx, engine: cached } : ctx, { ...input, params }); }
+  catch (error) { return writePolicyRefusalResponse(error); } // Fork: a policy refusal is a response.
   if (prepared.prior) return withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs())), false));
   const brainId = cached ? cachedPreadmitBrain(ctx.engine) : undefined;
   // Phase 4.4: the admission transaction runs on the warm single-write lane when it is free.
@@ -237,7 +240,8 @@ export async function submitPageMutation(ctx: OperationContext,
   catch (error) {
     if (!cached || !preadmitRecheckFailed(error)) throw error;
     dropPreadmitCache(ctx.engine);
-    prepared = await preparePageAdmission(ctx, { ...input, params: { ...params, request_id: prepared.admission.requestId } });
+    try { prepared = await preparePageAdmission(ctx, { ...input, params: { ...params, request_id: prepared.admission.requestId } }); }
+    catch (retryError) { return writePolicyRefusalResponse(retryError); } // Fork: a policy refusal is a response.
     if (prepared.prior) return withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs())), false));
     row = await admit(prepared.admission);
   }
@@ -254,7 +258,7 @@ export async function submitPageMutation(ctx: OperationContext,
 export async function preparePageAdmission(ctx: OperationContext,
   input: { operation: string; params: Record<string, unknown>; managedFileImport?: true; batch?: PageBatchMember; timelineSection?: TimelineSection;
     /** #6712 `repair overwritten-edits`: publish to the database only, so the restore never rewrites the committed file. */
-    databaseOnly?: 'overwrite_restore' | 'detached'; stagedBody?: true }
+    databaseOnly?: 'overwrite_restore' | 'detached'; stagedBody?: true; writePolicy?: true }
 ): Promise<{ prior: WriteRequest; admission?: undefined; typeWarning?: undefined; slugAdvisory?: undefined } | { prior?: undefined; admission: WriteAdmission; typeWarning: PageTypeWarning | null; slugAdvisory: string | null }> {
   if (input.operation === 'put_page' && ['kind', 'preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
     if (ctx.remote !== false || input.managedFileImport !== true || !OWNER_FILE_INTENTS.has(String(input.params.kind)) ||
@@ -353,6 +357,13 @@ export async function preparePageAdmission(ctx: OperationContext,
   await validateMutationSlug(ctx, input.operation, slug, sourceId);
   enforceClientSlugFence(ctx, slug, input.operation);
   enforceSubagentSlugFence(ctx, slug, input.operation);
+
+  // Fork: source write-policy gate (write-policy/mutation-gate.ts). Agent
+  // payloads only (op entry points pass writePolicy); a refusal throws before
+  // anything is admitted — no journal row, write-through, auto-link or jobs.
+  if (input.writePolicy && isGatedOperation(input.operation)) {
+    await applyMutationWritePolicy(ctx, { sourceId, slug, intent, bypass: p.bypass_policy });
+  }
   // Preserve same-source diagnostics for new timeline writes without making
   // terminal replay depend on a page that may have since been purged.
   if (input.operation === 'add_timeline_entry') await requireWritablePage({ ...ctx, sourceId }, slug, input.operation, 'page');

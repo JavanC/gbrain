@@ -57,6 +57,7 @@ export {
 
 import { pagesOperations } from './ops/pages.ts';
 import { persistenceOperations } from './ops/persistence.ts';
+import { writeContractOperations } from './ops/write-contract.ts'; // Fork: source write contract
 import { searchOperations } from './ops/search.ts';
 import { searchExactOperations } from './ops/search-exact.ts';
 import { takesOperations } from './ops/takes.ts';
@@ -147,6 +148,7 @@ export const operations: Operation[] = [
   // destructive-guard ops restore_page, purge_deleted_pages) — ops/pages.ts
   ...pagesOperations, ...pageEditOperations, ...pageAppendOperations, ...pageBatchOperations, ...pageUploadOperations,
   ...persistenceOperations,
+  ...writeContractOperations, // Fork: get_write_contract, validate_page
   // Search (search, query) — ops/search.ts; search_exact — ops/search-exact.ts
   ...searchOperations, ...searchExactOperations,
   ...feedbackOperations,

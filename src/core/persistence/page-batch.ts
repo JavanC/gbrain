@@ -211,7 +211,7 @@ async function preparePages(own: OperationContext, shared: OperationContext, bat
     if (page.allow_shrink !== undefined) params.allow_shrink = page.allow_shrink;
     if (page.drop_timeline !== undefined) params.drop_timeline = page.drop_timeline;
     try {
-      prepared[index] = await preparePageAdmission(ctx, { operation: 'put_page', params,
+      prepared[index] = await preparePageAdmission(ctx, { operation: 'put_page', params, writePolicy: true, // Fork: write-policy gate
         batch: { id: batchId, index, size: pages.length, requestId: pageBatchChildRequestId(batchId, index), ...(copies.length ? { repeats: copies } : {}) } });
     } catch (error) {
       if (!(error instanceof OperationError)) throw error;
