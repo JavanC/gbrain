@@ -1,4 +1,6 @@
 import { pageMutationSource, submitPageMutation } from '../persistence/page-mutations.ts';
+// Fork: source write-policy gate (see write-policy/mutation-gate.ts).
+import { previewWritePolicy } from '../write-policy/mutation-gate.ts';
 import { PAGE_MUTATION_PARAMS, CAPTURE_EVENT_PARAMS } from '../persistence/params.ts';
 import { assertPurgeParams } from '../persistence/purge-params.ts';
 /**
@@ -281,6 +283,7 @@ const put_page: Operation = {
     source_kind: { type: 'string', required: false, description: 'Ingestion channel taxonomy (capture-cli | put_page | webhook | …). Remote callers: SERVER-STAMPED, client value ignored.' },
     source_uri: { type: 'string', required: false, description: 'Original URI/path/message-id the event carried. Remote callers: SERVER-STAMPED null.' },
     ingested_via: { type: 'string', required: false, description: 'Richer label paired with source_kind. Remote callers: SERVER-STAMPED.' },
+    bypass_policy: { type: 'boolean', required: false, description: 'Skip the source write-policy gate. LOCAL CLI ONLY — ignored for remote callers.' },
   },
   mutating: true,
   scope: 'write',
@@ -292,7 +295,13 @@ const put_page: Operation = {
         enforceClientSlugFence(ctx, p.slug, 'put_page');
         enforceSubagentSlugFence(ctx, p.slug, 'put_page');
       }
-      return { dry_run: true, action: 'put_page', slug: p.slug };
+      // Fork: a preview surfaces the same write-policy rejection a real write
+      // would. The gate itself lives in submitPageMutation (the single funnel
+      // every real mutation passes through); this call keeps --dry-run honest.
+      const preview = await previewWritePolicy(ctx, p);
+      if (preview.rejection) return preview.rejection;
+      return { dry_run: true, action: 'put_page', slug: p.slug,
+        ...(preview.report ? { policy: preview.report } : {}) };
     }
     return submitPageMutation(ctx, { operation: 'put_page', params: p });
   },

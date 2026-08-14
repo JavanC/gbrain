@@ -155,6 +155,7 @@ detail on demand.)
 | ambient memory writeback (opt-in unprompted fact capture — `memory.auto_writeback`, harness instruction blocks, Stop-hook backstop, read-time TTL) | `docs/guides/ambient-writeback.md` + the ambient-writeback cluster in `KEY_FILES.md` |
 | Memorable integration / session receipts / relay consent (`integrations.memorable.*`) | `docs/memorable-agents.md` + the hook-heartbeat/capture-spec/codex-hooks entries in `KEY_FILES.md` |
 | chat connectors (live ChatGPT/Claude history sync — `gbrain connectors`) | `docs/guides/chat-connectors.md` + the `src/core/connectors/*` entries in `KEY_FILES.md` |
+| source write policy / the `put_page` contract gate | `docs/guides/source-write-policy.md` |
 | schema packs / page types / extraction | `docs/architecture/schema-packs.md`, `type-taxonomy.md`, `lens-packs.md` |
 | thin-client / remote MCP / cross-modal | `docs/architecture/thin-client.md` |
 | memory verbs / MCP tool surface (`--surface`) / conformance | `docs/protocol/MEMORY_VERBS_v1.md` + the `verbs*`/`surface.ts`/`protocol.ts` entries in `KEY_FILES.md` |

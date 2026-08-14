@@ -1,3 +1,4 @@
+import { isGatedOperation, runMutationWritePolicy } from '../write-policy/mutation-gate.ts';
 import { randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -86,6 +87,21 @@ export async function submitPageMutation(ctx: OperationContext,
   validatePageSlug(slug);
   enforceClientSlugFence(ctx, slug, input.operation);
   enforceSubagentSlugFence(ctx, slug, input.operation);
+
+  // --- Fork: source write-policy gate --------------------------------------
+  //
+  // When the target source declares an enabled `write_policy:` block in its
+  // own gbrain.yml, the payload is normalized (server-managed fields filled
+  // on create / preserved on update) and validated BEFORE anything is
+  // admitted. A rejection means ZERO writes: no request row, no repo
+  // write-through, no auto-link, no backstop jobs. Placed here rather than in
+  // the put_page handler so capture is covered by the same contract.
+  if (isGatedOperation(input.operation)) {
+    const policy = await runMutationWritePolicy(ctx, {
+      sourceId, slug, content: intent.content, bypass: p.bypass_policy });
+    if (policy.rejection) return policy.rejection;
+    if (policy.content !== undefined) intent.content = policy.content;
+  }
   // Preserve same-source diagnostics for new timeline writes without making
   // terminal replay depend on a page that may have since been purged.
   if (input.operation === 'add_timeline_entry') await requireWritablePage({ ...ctx, sourceId }, slug, input.operation, 'page');

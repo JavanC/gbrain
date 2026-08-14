@@ -1,0 +1,89 @@
+# Fixture: the write policy for a directory-typed personal knowledge brain
+# whose repo enforces a staged-page lint before auto-commit.
+#
+# This is the exact rule set `test/write-policy-repo-lint-parity.test.ts` pins
+# against the repo-lint table, so a brain repo can copy this block into its own
+# gbrain.yml and know the MCP gate and the commit gate agree.
+
+write_policy:
+  version: 1
+  enabled: true
+  contract_version: "1"
+
+  required_fields: [title, type, tags, created]
+  non_empty_list_fields: [tags]
+
+  server_managed:
+    created:
+      mode: set_on_create_preserve_on_update
+      value: date
+      timezone: Asia/Taipei
+
+  type_path_rules:
+    - prefix: concepts/
+      types:
+        - concept
+        - pattern
+        - principle
+        - insight
+        - technique
+        - pain-point
+        - market-gap
+        - capability
+        - architecture
+        - architectural-pattern
+        - case-study
+        - resource
+        - trend
+        - tool
+        - tool-pattern
+        - research
+        - idea
+    - prefix: people/
+      types: [person]
+    - prefix: companies/
+      types: [company]
+    - prefix: projects/
+      types: [project]
+    - prefix: writing/
+      types: [structure-note, essay, synthesis]
+    - prefix: meetings/
+      types: [meeting]
+    - prefix: sources/
+      types: [source]
+    # Staging area: type is decided at promotion time.
+    - prefix: inbox/
+      types: any
+    # Retired pages keep whatever type they had when they were current.
+    - prefix: archive/
+      types: any
+
+  connection_rules:
+    id_style: slug_only
+    slug_pattern: kebab
+    # Deliberately `warn`, not `error` — see the divergence note in the parity test.
+    require_resolvable: warn
+
+  slug_rules:
+    # The repo lint walks a fixed set of knowledge directories and ignores
+    # everything else; the gate must decline the same writes, not refuse them.
+    scope: known_prefixes
+    exempt_basenames: [readme]
+
+  template_markdown: |
+    ---
+    title: Human Readable Title
+    type: concept
+    tags:
+      - topic
+    connections:
+      - id: related-page-slug
+        why: one line on why these connect
+        type: extends
+    ---
+
+    Compiled truth: what is durably true about this, in prose.
+
+    <!-- timeline -->
+
+    - 2026-01-01 — what happened, with evidence.
