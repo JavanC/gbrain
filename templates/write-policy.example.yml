@@ -1,0 +1,83 @@
+# Source write policy — paste into your source repo's `gbrain.yml`.
+#
+# Declares the page contract this repo enforces. Agents discover it with
+# `get_write_contract`, preflight with `validate_page`, and `put_page` rejects a
+# non-conforming page before anything is written.
+#
+# Full guide: docs/guides/source-write-policy.md
+#
+# Opt-in: delete this block (or set `enabled: false`) and the source behaves
+# exactly as gbrain always has.
+
+write_policy:
+  version: 1
+  enabled: true
+  # Bump whenever you change the rules below. Agents cache the contract against it.
+  contract_version: "1"
+
+  # Frontmatter the AGENT must supply. The server never invents these.
+  required_fields: [title, type, tags, created]
+  non_empty_list_fields: [tags]
+
+  # Frontmatter the SERVER owns. `created` is listed as required above AND
+  # server-managed here: the repo demands it, the server supplies it, so an
+  # agent that omits it still produces a committable page.
+  server_managed:
+    created:
+      mode: set_on_create_preserve_on_update
+      value: date            # YYYY-MM-DD
+      timezone: UTC          # set your own zone, e.g. Asia/Taipei
+
+  # Directory prefix → page types that directory accepts. Longest prefix wins.
+  type_path_rules:
+    - prefix: concepts/
+      types: [concept, pattern, principle, insight, technique]
+    - prefix: people/
+      types: [person]
+    - prefix: companies/
+      types: [company]
+    - prefix: projects/
+      types: [project]
+    - prefix: meetings/
+      types: [meeting]
+    - prefix: sources/
+      types: [source]
+    # Staging area: anything goes until it is promoted.
+    - prefix: inbox/
+      types: any
+
+  connection_rules:
+    # `connections[].id` must be a bare slug — path-qualified references belong
+    # in the body as [[dir/slug]] wikilinks.
+    id_style: slug_only
+    slug_pattern: kebab
+    # Keep at `warn`: writing page A before its referenced page B is legitimate,
+    # and a single-page gate cannot know B is coming. Your repo lint sees the
+    # whole tree at commit time and is the right place to make this fatal.
+    require_resolvable: warn
+
+  slug_rules:
+    # `known_prefixes`: pages outside the directories above are IGNORED by this
+    # policy (matching a repo lint that walks a fixed set of knowledge dirs).
+    # Use `require_known_prefix: true` instead to REFUSE them — declaring both
+    # is a policy error. Audit your existing pages before choosing.
+    scope: known_prefixes
+    exempt_basenames: [readme]
+
+  template_markdown: |
+    ---
+    title: Human Readable Title
+    type: concept
+    tags:
+      - topic
+    connections:
+      - id: related-page-slug
+        why: one line on why these connect
+        type: extends
+    ---
+
+    Compiled truth: what is durably true, in prose.
+
+    <!-- timeline -->
+
+    - 2026-01-01 — what happened, with evidence.
