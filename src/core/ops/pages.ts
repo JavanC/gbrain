@@ -1,6 +1,8 @@
 import { pageMutationSource, submitPageMutation } from '../persistence/page-mutations.ts';
 import { suffixedSlugDryRun } from '../persistence/suffixed-slug.ts';
 import { PAGE_MUTATION_PARAMS, CAPTURE_EVENT_PARAMS, WRITE_WAIT_PARAM } from '../persistence/params.ts';
+// Fork: source write-policy gate (see write-policy/mutation-gate.ts).
+import { previewWritePolicy } from '../write-policy/mutation-gate.ts';
 import { assertPurgeParams } from '../persistence/purge-params.ts';
 /**
  * Page CRUD operation cluster — pure move from operations.ts (v0.46.x
@@ -307,6 +309,7 @@ const put_page: Operation = {
     source_kind: { type: 'string', description: 'Server-stamped remotely.', required: false },
     source_uri: { type: 'string', description: 'Server-stamped remotely.', required: false },
     ingested_via: { type: 'string', description: 'Server-stamped remotely.', required: false },
+    bypass_policy: { type: 'boolean', required: false, description: 'Skip the source write-policy gate. LOCAL CLI ONLY — ignored for remote callers.' },
   },
   mutating: true,
   scope: 'write',
@@ -319,9 +322,15 @@ const put_page: Operation = {
         enforceSubagentSlugFence(ctx, p.slug, 'put_page');
         await suffixedSlugDryRun(ctx, sourceId, p.slug);
       }
-      return { dry_run: true, action: 'put_page', slug: p.slug };
+      // Fork: a preview surfaces the same write-policy rejection a real write
+      // would. The gate itself lives in submitPageMutation (the single funnel
+      // every real mutation passes through); this call keeps --dry-run honest.
+      const preview = await previewWritePolicy(ctx, p);
+      if (preview.rejection) return preview.rejection;
+      return { dry_run: true, action: 'put_page', slug: p.slug,
+        ...(preview.report ? { policy: preview.report } : {}) };
     }
-    return submitPageMutation(ctx, { operation: 'put_page', params: p }).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error));
+    return submitPageMutation(ctx, { operation: 'put_page', params: p, writePolicy: true }).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error));
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };
@@ -658,7 +667,7 @@ const capture: Operation = {
       }
       return { dry_run: true, action: 'capture', slug: p.slug };
     }
-    return submitPageMutation(ctx, { operation: 'capture', params: p });
+    return submitPageMutation(ctx, { operation: 'capture', params: p, writePolicy: true });
   },
 };
 

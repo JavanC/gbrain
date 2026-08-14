@@ -176,7 +176,7 @@ async function preparePages(own: OperationContext, shared: OperationContext, bat
     if (page.expected_revision !== undefined) params.expected_revision = page.expected_revision;
     if (page.allow_empty !== undefined) params.allow_empty = page.allow_empty;
     try {
-      prepared[index] = await preparePageAdmission(ctx, { operation: 'put_page', params,
+      prepared[index] = await preparePageAdmission(ctx, { operation: 'put_page', params, writePolicy: true, // Fork: write-policy gate
         batch: { id: batchId, index, size: pages.length, requestId: pageBatchChildRequestId(batchId, index) } });
     } catch (error) {
       if (!(error instanceof OperationError)) throw error;

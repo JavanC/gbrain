@@ -1,3 +1,4 @@
+import { applyMutationWritePolicy, isGatedOperation, writePolicyRefusalResponse } from '../write-policy/mutation-gate.ts';
 import { randomUUID } from 'node:crypto';
 import { fenceNormalizedNotice, type FencesNormalized } from '../fence-repair/report.ts';
 import { parseFenceRepairReceipt } from '../fence-repair/receipt.ts';
@@ -149,14 +150,16 @@ const OWNER_FILE_INTENTS: ReadonlySet<string> = new Set(['managed_file_import', 
 export interface PageBatchMember { id: string; index: number; size: number; requestId: string }
 
 export async function submitPageMutation(ctx: OperationContext,
-  input: { operation: string; params: Record<string, unknown>; waitMs?: number; managedFileImport?: true }): Promise<Record<string, unknown>> {
+  input: { operation: string; params: Record<string, unknown>; waitMs?: number; managedFileImport?: true; writePolicy?: true }): Promise<Record<string, unknown>> {
   assertPersistenceAccepting(ctx.engine);
   // #6007: wait_ms is a reply deadline from arrival, never part of the write's identity.
   const arrived = performance.now();
   const { wait_ms: wireWait, ...params } = input.params;
   const wireWaitMs = parseWireWriteWaitMs(wireWait);
   const waitMs = () => wireWaitMs !== undefined ? Math.max(0, wireWaitMs - (performance.now() - arrived)) : input.waitMs ?? ctx.writeWaitMs;
-  const prepared = await preparePageAdmission(ctx, { ...input, params });
+  let prepared: Awaited<ReturnType<typeof preparePageAdmission>>;
+  try { prepared = await preparePageAdmission(ctx, { ...input, params }); }
+  catch (error) { return writePolicyRefusalResponse(error); } // Fork: a policy refusal is a response.
   if (prepared.prior) return pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs()));
   const row = await admitWrite(ctx.engine, prepared.admission);
   const response = pendingAwareResponse(ctx, await waitForWrite(ctx.engine, row, ctx.config, waitMs()));
@@ -170,7 +173,7 @@ export async function submitPageMutation(ctx: OperationContext,
  * the admission to submit. `put_pages` admits several of these together.
  */
 export async function preparePageAdmission(ctx: OperationContext,
-  input: { operation: string; params: Record<string, unknown>; managedFileImport?: true; batch?: PageBatchMember }
+  input: { operation: string; params: Record<string, unknown>; managedFileImport?: true; batch?: PageBatchMember; writePolicy?: true }
 ): Promise<{ prior: WriteRequest; admission?: undefined; typeWarning?: undefined; slugAdvisory?: undefined } | { prior?: undefined; admission: WriteAdmission; typeWarning: PageTypeWarning | null; slugAdvisory: string | null }> {
   if (input.operation === 'put_page' && ['kind', 'preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
     if (ctx.remote !== false || input.managedFileImport !== true || !OWNER_FILE_INTENTS.has(String(input.params.kind)) ||
@@ -245,6 +248,13 @@ export async function preparePageAdmission(ctx: OperationContext,
   validatePageSlug(slug);
   enforceClientSlugFence(ctx, slug, input.operation);
   enforceSubagentSlugFence(ctx, slug, input.operation);
+
+  // Fork: source write-policy gate (write-policy/mutation-gate.ts). Agent
+  // payloads only (op entry points pass writePolicy); a refusal throws before
+  // anything is admitted — no journal row, write-through, auto-link or jobs.
+  if (input.writePolicy && isGatedOperation(input.operation)) {
+    await applyMutationWritePolicy(ctx, { sourceId, slug, intent, bypass: p.bypass_policy });
+  }
   // Preserve same-source diagnostics for new timeline writes without making
   // terminal replay depend on a page that may have since been purged.
   if (input.operation === 'add_timeline_entry') await requireWritablePage({ ...ctx, sourceId }, slug, input.operation, 'page');
