@@ -18,6 +18,7 @@ import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '
 import type { HybridSearchMeta } from './types.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, isGlobalBasenameEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
 import { isFactsBackstopEligible } from './facts/eligibility.ts';
+import type { PolicyViolation } from './write-policy/index.ts';
 import { stripTakesFence } from './takes-fence.ts';
 import { stripFactsFence } from './facts-fence.ts';
 import { getContentFlag } from './quarantine.ts';
@@ -769,7 +770,7 @@ const get_page: Operation = {
 
 const put_page: Operation = {
   name: 'put_page',
-  description: 'Write/update a page (markdown with frontmatter). Chunks, embeds, reconciles tags, and (when auto_link/auto_timeline are enabled) extracts + reconciles graph links and timeline entries. For large content on Windows (pipe-buffer limit ~45KB) or any file-as-input workflow, use `gbrain capture --file PATH --slug SLUG` — capture reads the file as a Buffer with a binary-NUL guard and adds provenance write-through (v0.39.3.0).',
+  description: 'Write/update a page (markdown with frontmatter). Chunks, embeds, reconciles tags, and (when auto_link/auto_timeline are enabled) extracts + reconciles graph links and timeline entries. IMPORTANT: some sources enforce a page contract (required frontmatter, directory→type rules) — call `get_write_contract` before your first write to a source, and `validate_page` if unsure; a contract violation is rejected with machine-readable `violations` and writes NOTHING. For large content on Windows (pipe-buffer limit ~45KB) or any file-as-input workflow, use `gbrain capture --file PATH --slug SLUG` — capture reads the file as a Buffer with a binary-NUL guard and adds provenance write-through (v0.39.3.0).',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
@@ -782,6 +783,11 @@ const put_page: Operation = {
     source_kind: { type: 'string', required: false, description: 'Ingestion channel taxonomy (capture-cli | put_page | webhook | …). Remote callers: SERVER-STAMPED, client value ignored.' },
     source_uri: { type: 'string', required: false, description: 'Original URI/path/message-id the event carried. Remote callers: SERVER-STAMPED null.' },
     ingested_via: { type: 'string', required: false, description: 'Richer label paired with source_kind. Remote callers: SERVER-STAMPED.' },
+    // Source write-policy escape hatch. Honored ONLY for trusted local callers
+    // (ctx.remote === false) — a remote/MCP caller passing it is ignored, same
+    // fail-closed posture as the provenance params above. Exists for operator
+    // repair of a pre-policy backlog, not for routine writes.
+    bypass_policy: { type: 'boolean', required: false, description: 'Skip the source write-policy gate. LOCAL CLI ONLY — ignored for remote callers.' },
   },
   mutating: true,
   scope: 'write',
@@ -821,7 +827,73 @@ const put_page: Operation = {
     // enforceSubagentSlugFence for the fail-closed policy.
     enforceSubagentSlugFence(ctx, slug, 'put_page');
 
-    if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
+    // --- Source write-policy gate --------------------------------------------
+    //
+    // When the target source declares an enabled `write_policy:` block in its
+    // own gbrain.yml, the payload is normalized (server-managed fields filled
+    // on create / preserved on update) and validated BEFORE anything is
+    // written. A rejection means ZERO writes: no DB row, no repo write-through,
+    // no auto-link, no backstop jobs.
+    //
+    // Runs BEFORE the dry-run short-circuit (same reasoning as the subagent
+    // fence above) so a preview surfaces the same rejection a real write would.
+    //
+    // Sources with no policy behave exactly as they always have.
+    let policyReport:
+      | { contract_version: string; normalized: boolean; warnings: PolicyViolation[] }
+      | undefined;
+    let content = p.content as string;
+    const bypassPolicy = ctx.remote === false && p.bypass_policy === true;
+    if (!bypassPolicy) {
+      const { runWritePolicyGate } = await import('./write-policy/index.ts');
+      const gate = await runWritePolicyGate({
+        engine: ctx.engine,
+        ...(ctx.sourceId ? { sourceId: ctx.sourceId } : {}),
+        slug,
+        content,
+      });
+      if (gate.status === 'policy_error') {
+        // Fail-CLOSED: a source that declares a policy we cannot parse gets no
+        // writes. Degrading to "no rules" would hand the caller a green light
+        // for pages the repo will later refuse, which is the exact failure this
+        // gate exists to remove. The filesystem path is local-only detail.
+        return {
+          error: 'write_policy_unavailable',
+          slug,
+          written: false,
+          message: `source "${ctx.sourceId ?? 'default'}" declares a write policy that failed to load: ${gate.error}`,
+          ...(ctx.remote === false ? { policy_path: gate.path } : {}),
+        };
+      }
+      if (gate.status === 'checked') {
+        if (!gate.result.valid) {
+          return {
+            error: 'policy_violation',
+            slug,
+            written: false,
+            source_id: ctx.sourceId ?? null,
+            contract_version: gate.policy.contract_version,
+            violations: gate.result.violations,
+            hint: 'Nothing was written. Call get_write_contract for this source\'s field contract, fix the frontmatter, then retry (validate_page checks without writing).',
+          };
+        }
+        content = gate.result.normalized_content;
+        policyReport = {
+          contract_version: gate.policy.contract_version,
+          normalized: gate.result.normalized,
+          warnings: gate.result.violations.filter((v) => v.severity === 'warning'),
+        };
+      }
+    }
+
+    if (ctx.dryRun) {
+      return {
+        dry_run: true,
+        action: 'put_page',
+        slug: p.slug,
+        ...(policyReport ? { policy: policyReport } : {}),
+      };
+    }
     // Skip embedding when the AI gateway has no embedding provider configured.
     // Checks all auth env vars for the resolved provider, not just OPENAI_API_KEY,
     // so Gemini / Ollama / Voyage brains don't silently drop embeddings (Codex C2).
@@ -850,7 +922,10 @@ const put_page: Operation = {
       // Pack load failed; fall through to legacy inferType behavior.
       activePack = undefined;
     }
-    const result = await importFromContent(ctx.engine, slug, p.content as string, {
+    // `content` is the policy-normalized payload when a write policy is in
+    // force (server-managed frontmatter filled/preserved), otherwise the
+    // caller's bytes verbatim.
+    const result = await importFromContent(ctx.engine, slug, content, {
       noEmbed,
       // v0.42 (#1699): untrusted callers can't smuggle gate-owned frontmatter
       // markers (quarantine/content_flag/embed_skip). Fail-closed — anything
@@ -1137,9 +1212,127 @@ const put_page: Operation = {
       ...(factsQueued ? { facts_backstop: factsQueued } : {}),
       ...(chronicleQueued ? { chronicle_backstop: chronicleQueued } : {}),
       ...(writeThrough ? { write_through: writeThrough } : {}),
+      ...(policyReport ? { policy: policyReport } : {}),
     };
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
+};
+
+/**
+ * Resolve which source a write-contract question is about, refusing to answer
+ * for a source the caller has no grant on.
+ *
+ * Precedence mirrors sourceScopeOpts: an explicit `source_id` is honored only
+ * when it is inside the caller's federated grant (or the caller is a trusted
+ * local CLI); otherwise the caller's own scalar source answers.
+ */
+function resolveContractSourceId(
+  ctx: OperationContext,
+  requested: unknown,
+): { sourceId: string } | { error: string; message: string } {
+  const asked = typeof requested === 'string' && requested.trim() ? requested.trim() : null;
+  const allowed = ctx.auth?.allowedSources;
+  if (!asked) {
+    if (ctx.sourceId) return { sourceId: ctx.sourceId };
+    if (allowed && allowed.length === 1) return { sourceId: allowed[0] };
+    return { sourceId: 'default' };
+  }
+  if (ctx.remote === false) return { sourceId: asked };
+  if (allowed && allowed.length > 0) {
+    if (allowed.includes(asked)) return { sourceId: asked };
+  } else if (ctx.sourceId && asked === ctx.sourceId) {
+    return { sourceId: asked };
+  }
+  return {
+    error: 'source_not_permitted',
+    message: `caller is not scoped to source "${asked}"`,
+  };
+}
+
+const get_write_contract: Operation = {
+  name: 'get_write_contract',
+  description:
+    'Return the page-write contract for a source: which frontmatter fields you must supply, which ' +
+    'ones the server fills or preserves, which page types each directory accepts, the connection-id ' +
+    'rules, and a copy-pasteable template. Call this ONCE before your first put_page to a source (and ' +
+    'again when contract_version changes). Sources that declare no policy return enforced: false, ' +
+    'meaning put_page accepts any well-formed markdown.',
+  params: {
+    source_id: {
+      type: 'string',
+      required: false,
+      description: 'Source to describe. Defaults to the caller\'s own source; a source outside the caller\'s grant is refused.',
+    },
+  },
+  scope: 'read',
+  handler: async (ctx, p) => {
+    const resolved = resolveContractSourceId(ctx, p.source_id);
+    if ('error' in resolved) return resolved;
+    const { loadWritePolicyForSource, buildWriteContract, buildNoContract } = await import('./write-policy/index.ts');
+    const resolution = await loadWritePolicyForSource(ctx.engine, resolved.sourceId);
+    if (resolution.status === 'active') return buildWriteContract(resolved.sourceId, resolution.policy);
+    if (resolution.status === 'error') {
+      return buildNoContract(resolved.sourceId, 'policy_error', resolution.error);
+    }
+    return buildNoContract(resolved.sourceId, resolution.reason);
+  },
+  cliHints: { name: 'write-contract' },
+};
+
+const validate_page: Operation = {
+  name: 'validate_page',
+  description:
+    'Preflight a put_page payload against the source write contract WITHOUT writing anything. Returns ' +
+    'valid, machine-readable violations (each with a fix), and the normalized frontmatter the server ' +
+    'would store. Same validator put_page runs, so a pass here means put_page will not reject the page.',
+  params: {
+    slug: { type: 'string', required: true, description: 'Page slug the content would be written to' },
+    content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
+  },
+  scope: 'read',
+  handler: async (ctx, p) => {
+    const slug = p.slug as string;
+    const { runWritePolicyGate } = await import('./write-policy/index.ts');
+    const gate = await runWritePolicyGate({
+      engine: ctx.engine,
+      ...(ctx.sourceId ? { sourceId: ctx.sourceId } : {}),
+      slug,
+      content: p.content as string,
+    });
+    if (gate.status === 'no_policy') {
+      return {
+        valid: true,
+        enforced: false,
+        slug,
+        source_id: ctx.sourceId ?? null,
+        reason: gate.reason,
+        violations: [],
+      };
+    }
+    if (gate.status === 'policy_error') {
+      return {
+        valid: false,
+        enforced: true,
+        slug,
+        source_id: ctx.sourceId ?? null,
+        error: 'write_policy_unavailable',
+        message: gate.error,
+        violations: [],
+      };
+    }
+    return {
+      valid: gate.result.valid,
+      enforced: true,
+      slug,
+      source_id: ctx.sourceId ?? null,
+      contract_version: gate.policy.contract_version,
+      is_update: gate.result.is_update,
+      violations: gate.result.violations,
+      normalized: gate.result.normalized,
+      normalized_frontmatter: gate.result.normalized_frontmatter,
+    };
+  },
+  cliHints: { name: 'validate-page', positional: ['slug'], stdin: 'content' },
 };
 
 // v0.31.2: isFactsBackstopEligible moved to src/core/facts/eligibility.ts
@@ -5388,6 +5581,9 @@ const chronicle_backfill: Operation = {
 export const operations: Operation[] = [
   // Page CRUD
   get_page, put_page, delete_page, list_pages,
+  // Source write contract — discover the page schema a source enforces, and
+  // preflight a payload against it before writing.
+  get_write_contract, validate_page,
   // v0.26.5 destructive-guard ops (page-level soft-delete + recovery + admin purge)
   restore_page, purge_deleted_pages,
   // Search
