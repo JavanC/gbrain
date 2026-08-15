@@ -769,4 +769,78 @@ describe('runPhaseProposeTakes — empty extraction memoization', () => {
     expect((result.details as Record<string, unknown>).tombstones_written).toBe(0);
     expect(captured.filter(c => c.sql.includes('INSERT INTO take_proposals'))).toHaveLength(0);
   });
+
+  test('includeSlugs restricts proposal extraction to matching slugs', async () => {
+    const pages = [
+      buildPage({ slug: 'projects/valuable-page', body: 'project prose' }),
+      buildPage({ slug: 'writing/navigation-map', body: 'map prose' }),
+    ];
+    const { engine } = buildMockEngine({ pages });
+    const seen: string[] = [];
+    const extractor: ProposeTakesExtractor = async ({ pagePath }) => {
+      seen.push(pagePath);
+      return [{ claim_text: `${pagePath} claim`, kind: 'take', holder: 'brain', weight: 0.5 }];
+    };
+    const result = await runPhaseProposeTakes(buildCtx(engine), {
+      extractor,
+      includeSlugs: ['projects/**'],
+    });
+
+    expect(seen).toEqual(['projects/valuable-page']);
+    const details = result.details as Record<string, unknown>;
+    expect(details.pages_skipped_scope).toBe(1);
+    expect(details.proposals_inserted).toBe(1);
+  });
+
+  test('excludeSlugs prevents generated or receipt pages from being scanned', async () => {
+    const pages = [
+      buildPage({ slug: 'projects/valuable-page', body: 'project prose' }),
+      buildPage({ slug: 'extracts/2026-06-06/takes-proposed', body: 'receipt prose' }),
+    ];
+    const { engine } = buildMockEngine({ pages });
+    const seen: string[] = [];
+    const extractor: ProposeTakesExtractor = async ({ pagePath }) => {
+      seen.push(pagePath);
+      return [{ claim_text: `${pagePath} claim`, kind: 'take', holder: 'brain', weight: 0.5 }];
+    };
+    const result = await runPhaseProposeTakes(buildCtx(engine), {
+      extractor,
+      excludeSlugs: ['extracts/**'],
+    });
+
+    expect(seen).toEqual(['projects/valuable-page']);
+    const details = result.details as Record<string, unknown>;
+    expect(details.pages_skipped_scope).toBe(1);
+    expect(details.proposals_inserted).toBe(1);
+  });
+
+  test('pageLimit applies after include/exclude scope filtering', async () => {
+    const pages = [
+      buildPage({ slug: 'writing/navigation-map', body: 'map prose' }),
+      buildPage({ slug: 'projects/first', body: 'first project prose' }),
+      buildPage({ slug: 'extracts/2026-06-06/takes-proposed', body: 'receipt prose' }),
+      buildPage({ slug: 'projects/second', body: 'second project prose' }),
+      buildPage({ slug: 'projects/third', body: 'third project prose' }),
+    ];
+    const { engine } = buildMockEngine({ pages });
+    const seen: string[] = [];
+    const extractor: ProposeTakesExtractor = async ({ pagePath }) => {
+      seen.push(pagePath);
+      return [{ claim_text: `${pagePath} claim`, kind: 'take', holder: 'brain', weight: 0.5 }];
+    };
+
+    const result = await runPhaseProposeTakes(buildCtx(engine), {
+      extractor,
+      includeSlugs: ['projects/**'],
+      excludeSlugs: ['extracts/**'],
+      pageLimit: 2,
+    });
+
+    expect(seen).toEqual(['projects/first', 'projects/second']);
+    const details = result.details as Record<string, unknown>;
+    expect(details.pages_scanned).toBe(4);
+    expect(details.pages_skipped_scope).toBe(2);
+    expect(details.cache_misses).toBe(2);
+    expect(details.proposals_inserted).toBe(2);
+  });
 });
