@@ -36,6 +36,7 @@ const LINT_DIR_ALLOWED_TYPES: Record<string, string[] | 'any'> = {
     'concept', 'pattern', 'principle', 'insight', 'technique', 'pain-point',
     'market-gap', 'capability', 'architecture', 'architectural-pattern',
     'case-study', 'resource', 'trend', 'tool', 'tool-pattern', 'research', 'idea',
+    'reference', 'experience', 'preference',
   ],
   'people/': ['person'],
   'companies/': ['company'],
