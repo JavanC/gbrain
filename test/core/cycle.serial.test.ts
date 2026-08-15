@@ -12,6 +12,12 @@
 import { describe, test, expect, mock, beforeEach, beforeAll, afterAll, afterEach } from 'bun:test';
 import { existsSync, unlinkSync } from 'fs';
 
+// The engine=null lock tests seed and delete a real cycle.lock. Without this,
+// gbrainPath() resolves to the operator's live ~/.gbrain and the afterEach
+// would unlink the lock out from under a scheduled dream cycle.
+import { isolateGbrainHome } from '../helpers/isolate-gbrain-home.ts';
+isolateGbrainHome();
+
 // ─── Mocks ──────────────────────────────────────────────────────────
 // Track what each phase was called with so tests can assert.
 
@@ -307,7 +313,12 @@ describe('runCycle — cycle_already_running skip', () => {
 // ─── Engine null path ─────────────────────────────────────────────
 
 describe('runCycle — engine = null (filesystem-only mode)', () => {
-  const lockFile = require('path').join(require('os').homedir(), '.gbrain', 'cycle.lock');
+  // Must track the SAME path production uses (`gbrainPath('cycle.lock')`,
+  // cycle.ts:getLockFilePathDefault), which honors GBRAIN_HOME. Hardcoding
+  // `homedir()/.gbrain` meant this test seeded — and its afterEach deleted —
+  // the operator's REAL cycle lock, which on a machine running a scheduled
+  // dream could yank the lock out from under a live cycle.
+  const lockFile = require('../../src/core/config.ts').gbrainPath('cycle.lock');
 
   afterEach(() => {
     if (existsSync(lockFile)) { try { unlinkSync(lockFile); } catch { /* */ } }

@@ -29,6 +29,10 @@ function run(args: string[]): { exitCode: number; stdout: string; stderr: string
   const env = { ...process.env, HOME: tmp } as Record<string, string | undefined>;
   delete env.DATABASE_URL;
   delete env.GBRAIN_DATABASE_URL;
+  // GBRAIN_HOME outranks HOME in configDir(), so an inherited one would point
+  // the child at a different brain and it would never see the fixture written
+  // under `tmp`. The harness's premise is a temp HOME; strip what defeats it.
+  delete env.GBRAIN_HOME;
   try {
     const stdout = execFileSync('bun', ['run', CLI, ...args], {
       env: env as Record<string, string>,

@@ -14,7 +14,10 @@ describe('getProviderCapabilities (v0.38 Slice 1 — D6/D7 recipe-driven capabil
     const caps = getProviderCapabilities('openai:gpt-5.2');
     expect(caps.supportsToolCalling).toBe(true);
     expect(caps.supportsPromptCaching).toBe(false); // OpenAI implicit caching doesn't get marked
-    expect(caps.maxContext).toBe(200000);
+    // Tracks `max_context_tokens` in src/core/ai/recipes/openai.ts, raised to
+    // the GPT-5.5 window when that model joined the recipe. The assertion had
+    // been left at the pre-GPT-5.5 200k.
+    expect(caps.maxContext).toBe(1050000);
   });
 
   it('returns capabilities for Google Gemini', () => {
