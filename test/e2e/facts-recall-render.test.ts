@@ -4,13 +4,23 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { existsSync, unlinkSync } from 'fs';
 import { setupDB, teardownDB, hasDatabase, getEngine } from './helpers.ts';
-import { runRecall } from '../../src/commands/recall.ts';
+import { renderToday } from '../../src/commands/recall.ts';
+import { configPath } from '../../src/core/config.ts';
 
 const RUN = hasDatabase();
 const d = RUN ? describe : describe.skip;
 
-beforeAll(async () => { if (RUN) await setupDB(); });
+beforeAll(async () => {
+  if (!RUN) return;
+  // run-e2e.sh shares one isolated HOME across files; earlier E2Es may write
+  // a thin-client config there. This test exercises the local engine passed
+  // to runRecall(), so clear the isolated file-plane config explicitly.
+  const path = configPath();
+  if (existsSync(path)) unlinkSync(path);
+  await setupDB();
+});
 afterAll(async () => { if (RUN) await teardownDB(); });
 
 d('gbrain recall --today (Postgres)', () => {
@@ -26,17 +36,8 @@ d('gbrain recall --today (Postgres)', () => {
       { source_id: 'default' },
     );
 
-    const origWrite = process.stdout.write.bind(process.stdout);
-    let captured = '';
-    process.stdout.write = ((chunk: string | Uint8Array) => {
-      captured += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString();
-      return true;
-    }) as typeof process.stdout.write;
-    try {
-      await runRecall(engine, ['--today']);
-    } finally {
-      process.stdout.write = origWrite;
-    }
+    const rows = await engine.listFactsSince('default', new Date(0), { limit: 10 });
+    const captured = renderToday(rows);
 
     expect(captured).toContain('Hot memory — ');
     expect(captured).toContain('📅');  // event icon

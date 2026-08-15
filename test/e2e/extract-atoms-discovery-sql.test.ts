@@ -37,8 +37,10 @@ afterAll(async () => {
 
 beforeEach(async () => {
   if (skip) return;
-  // Clean test-source rows + atoms + meeting pages between tests
-  await engine.executeRaw(`DELETE FROM pages WHERE source_id IN ('default', 'dept-x') AND (type = 'atom' OR type IN ('meeting', 'source', 'article', 'video', 'book', 'original'))`);
+  // Clean test-source rows between tests. Use a broad source-scoped delete so
+  // non-extractable control fixtures do not leak across cases when the base
+  // pack's extractable set expands.
+  await engine.executeRaw(`DELETE FROM pages WHERE source_id IN ('default', 'dept-x')`);
   await engine.executeRaw(`DELETE FROM sources WHERE id = 'dept-x'`);
 });
 
@@ -74,13 +76,13 @@ describeIfDB('v0.41.2.1 D10 — discoverExtractablePages on real Postgres', () =
   test('returns extractable rows when seeded', async () => {
     await seedPage({ slug: 'meeting/a', type: 'meeting', content_hash: 'hash-A-1234567890abc' });
     await seedPage({ slug: 'source/b', type: 'source', content_hash: 'hash-B-1234567890abc' });
-    await seedPage({ slug: 'notes/skip', type: 'note', content_hash: 'hash-N-1234567890abc' });
+    await seedPage({ slug: 'deals/skip', type: 'deal', content_hash: 'hash-N-1234567890abc' });
 
     const discovered = await discoverExtractablePages(engine, 'default');
     const slugs = discovered.map((d) => d.slug).sort();
     expect(slugs).toContain('meeting/a');
     expect(slugs).toContain('source/b');
-    expect(slugs).not.toContain('notes/skip');
+    expect(slugs).not.toContain('deals/skip');
   });
 
   test('ANY($::text[]) bind works through postgres.unsafe (PGLite parity proof)', async () => {
@@ -90,7 +92,7 @@ describeIfDB('v0.41.2.1 D10 — discoverExtractablePages on real Postgres', () =
     for (const type of ['meeting', 'source', 'article', 'video', 'book', 'original']) {
       await seedPage({ slug: `${type}/x`, type, content_hash: `hash-${type}-1234567890ab` });
     }
-    await seedPage({ slug: 'note/skip', type: 'note', content_hash: 'hash-note-1234567890' });
+    await seedPage({ slug: 'deal/skip', type: 'deal', content_hash: 'hash-deal-1234567890' });
 
     const discovered = await discoverExtractablePages(engine, 'default');
     const slugs = discovered.map((d) => d.slug).sort();
