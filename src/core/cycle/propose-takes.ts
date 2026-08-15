@@ -778,7 +778,13 @@ class ProposeTakesPhase extends BaseCyclePhase {
       : getChatModel();
     const proposalRunId = `propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${randomUUID().slice(0, 8)}`;
 
-    const modelId = opts.model ?? getChatModel();
+    // The probe, the skip report, and the recorded model_id must all name the
+    // model this phase ACTUALLY runs — which is resolvedModel, since
+    // `models.dream.propose_takes` may point somewhere other than the gateway
+    // chat model. Upstream added the provider probe against its own
+    // `opts.model ?? getChatModel()`; keeping that here would probe a model
+    // the phase never calls and skip on a provider it never needed.
+    const modelId = resolvedModel;
 
     // #4494: configurable extractor output caps (dream.triage.max_tokens
     // precedent — floor 256, retry clamped >= base, fail-open to the #3763
