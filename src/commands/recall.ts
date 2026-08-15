@@ -589,7 +589,7 @@ export async function runForget(engine: BrainEngine, args: string[]): Promise<vo
   process.stdout.write(`Forgot fact id=${id}${suffix}\n`);
 }
 
-function renderToday(rows: FactRow[]): string {
+export function renderToday(rows: FactRow[]): string {
   if (rows.length === 0) {
     return '# Hot memory — today\n\nNo facts captured today yet.\n';
   }
