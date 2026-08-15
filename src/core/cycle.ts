@@ -456,6 +456,12 @@ export interface CycleOpts {
    * + refreshes the cycle-lock-table TTL.
    */
   yieldBetweenPhases?: () => Promise<void>;
+  /** Include slug globs for propose_takes. Repeatable from CLI (--propose-include). */
+  proposeInclude?: string[];
+  /** Exclude slug globs for propose_takes. Repeatable from CLI (--propose-exclude). */
+  proposeExclude?: string[];
+  /** Page scan limit for propose_takes (--propose-limit). Counts MATCHING pages. */
+  proposeLimit?: number;
   /**
    * Generic in-phase keepalive (v0.23). Long-running phases (synthesize
    * waiting on a fan-out aggregator, patterns rolling up reflections)
@@ -2484,7 +2490,13 @@ export async function runCycle(
           const { runPhaseProposeTakes } = await import('./cycle/propose-takes.ts');
           // gbrain#4168: thread the job's absolute deadline so the phase's
           // clean partial-exit fires before the worker's kill switch.
-          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { repoPath: brainDir ?? undefined, deadlineAtMs: opts.deadlineAtMs ?? null }) as Promise<PhaseResult>);
+          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, {
+            repoPath: brainDir ?? undefined,
+            deadlineAtMs: opts.deadlineAtMs ?? null,
+            includeSlugs: opts.proposeInclude,
+            excludeSlugs: opts.proposeExclude,
+            pageLimit: opts.proposeLimit,
+          }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();
