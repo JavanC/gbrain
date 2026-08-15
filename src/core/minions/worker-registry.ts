@@ -150,13 +150,21 @@ function processLiveness(pid: number): 'alive' | 'dead' | 'unknown' {
  */
 function processStartMs(pid: number): number | null {
   try {
+    // `ps -o lstart=` prints a bare local timestamp with NO timezone
+    // ("Sat Aug 15 11:12:18 2026"), rendered in whatever zone `ps` inherits.
+    // `Date.parse` then guesses — and the two need not agree: a process whose
+    // own TZ is UTC while the system runs UTC+8 reads every start time 8 hours
+    // into the future, so the PID-reuse guard below discards every live worker
+    // and `gbrain` reports none. Pin BOTH sides to UTC: force `ps` to render
+    // in UTC, and parse it as UTC explicitly. Timezone-independent either way.
     const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
       encoding: 'utf8',
       timeout: 2000,
       stdio: ['ignore', 'pipe', 'ignore'],
+      env: { ...process.env, TZ: 'UTC' },
     }).trim();
     if (!out) return null;
-    const t = Date.parse(out);
+    const t = Date.parse(`${out} UTC`);
     return Number.isNaN(t) ? null : t;
   } catch {
     return null;

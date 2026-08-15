@@ -11,6 +11,14 @@ import {
 } from '../src/core/ai/gateway.ts';
 import { hybridSearch } from '../src/core/search/hybrid.ts';
 
+// This file drives hybridSearch with a stubbed 1536-d embedding. The active
+// embedding column is resolved from the CONFIG FILE, so an operator brain on a
+// different provider/dimension would make searchVector fail the dimension check,
+// hybridSearch swallow it, and every assertion below silently exercise the
+// keyword-only fallback instead of the branch under test.
+import { isolateGbrainHome } from './helpers/isolate-gbrain-home.ts';
+isolateGbrainHome();
+
 let engine: PGLiteEngine;
 const origFetch = globalThis.fetch;
 

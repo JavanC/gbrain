@@ -2,6 +2,27 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.66.0] - 2026-08-15
+
+**Three correctness fixes, and a test suite that stops lying about whether it passed.**
+
+The worker registry reported zero live workers on any host whose timezone runs ahead of UTC. `ps -o lstart=` prints a bare local timestamp with no zone; `Date.parse` guessed differently whenever a process's own `TZ` disagreed with the system's, pushing every recorded start time into the future so the PID-reuse guard discarded every entry. Both sides are now pinned to UTC.
+
+Reflex context telemetry was dropped whenever anything drained pending writes right after logging — including the CLI's own teardown on an exit path. Registration happened only after a dynamic import resolved, so the drain saw an empty set and reported nothing pending. Registration is now synchronous.
+
+And on any machine without GNU `timeout` (stock macOS), `bun run test` exited non-zero even when every test passed: the shard's status was overwritten by the reaped timeout sleeper. Worse, the same fallback marked a shard WEDGED only on exit code 124, which that path can never produce — so a suite that ran past its cap was silently truncated, printed a plausible partial count, and exited 1, and the 1 looked like ordinary test failures. Both halves are fixed, so a truncated run now says so.
+
+### Itemized changes
+
+- **Fixed: `processStartMs` timezone skew** (`src/core/minions/worker-registry.ts`). `ps` is invoked with `TZ=UTC` and its output parsed as UTC. Timezone-independent on both sides.
+- **Fixed: `logDeliveredReflexPointers` lost writes on drain** (`src/core/context/retrieval-reflex.ts`). Replaced the dynamic import with a static, cycle-free one so the pending-write tracker sees the write at call time.
+- **Fixed: `run-unit-parallel.sh` exit accounting.** `rc` is captured from the shard before the timeout sleeper is reaped, and the WEDGED marker now recognizes the signal-kill codes the no-`timeout` fallback actually produces.
+- **Test isolation, per file.** New `test/helpers/isolate-gbrain-home.ts`. Six files that depend on the embedding column resolved from the config FILE (or that write lock files) now redirect `GBRAIN_HOME` to a scratch dir. Deliberately per-file rather than a global preload: `configDir()` reads `GBRAIN_HOME` before `homedir()`, so a process-wide value is inherited by every test that spawns the CLI with its own temp `HOME` and silently overrides it.
+- **Fixed: a test could delete the operator's live cycle lock.** `test/core/cycle.serial.test.ts` computed `homedir()/.gbrain/cycle.lock` directly, bypassing `GBRAIN_HOME`, and its `afterEach` unlinked it — on a machine running a scheduled dream cycle that yanks the lock out from under a live run. It now tracks the same `gbrainPath()` production uses, inside an isolated home.
+- **Hardened: CLI-spawning test harnesses.** `skillpack-check`, `doctor-minions-check`, and `init-migrate-only` now strip `GBRAIN_HOME` from the child environment alongside `DATABASE_URL`, so their temp `HOME` means what it says.
+- **Fixed: stale capability expectation.** `test/ai/capabilities.test.ts` asserted the pre-GPT-5.5 OpenAI context window.
+
+No schema migrations.
 ## [0.42.65.0] - 2026-08-15
 
 **Your brain repo can now tell agents how to write to it — and the server holds them to it.**

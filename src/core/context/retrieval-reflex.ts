@@ -29,6 +29,7 @@ import { slugify } from '../entities/resolve.ts';
 import { stripTakesFence } from '../takes-fence.ts';
 import { stripFactsFence } from '../facts-fence.ts';
 import type { EntityCandidate } from './entity-salience.ts';
+import { logVolunteerEventsFireAndForget, volunteerEventRowsFrom } from './volunteer-events.ts';
 
 /** Default cap on pointers injected per turn (config: retrieval_reflex_max_pointers). */
 export const DEFAULT_MAX_POINTERS = 3;
@@ -351,17 +352,19 @@ export function renderPointerBlock(pointers: ReflexPointer[]): string {
  */
 export function logDeliveredReflexPointers(engine: BrainEngine, pointers: ReflexPointer[]): void {
   if (!pointers.length) return;
-  void import('./volunteer-events.ts')
-    .then(({ logVolunteerEventsFireAndForget, volunteerEventRowsFrom }) => {
-      logVolunteerEventsFireAndForget(
-        engine,
-        volunteerEventRowsFrom(
-          pointers.map((p) => ({ ...p, rationale: `${p.arm} match "${p.display}"` })),
-          { channel: 'reflex' },
-        ),
-      );
-    })
-    .catch(() => {
-      /* telemetry only */
-    });
+  // Registration must be SYNCHRONOUS. This used to go through a dynamic
+  // `import('./volunteer-events.ts').then(...)`, which meant the write was
+  // registered with the pending-write tracker only after the module promise
+  // resolved — a microtask later. Anything that drained immediately after the
+  // call (the CLI's finishCliTeardown on an exit path, or a test awaiting the
+  // sink) saw an empty set, returned "nothing pending", and the event was lost.
+  // The static import below is cycle-free: volunteer-events.ts only mentions
+  // retrieval-reflex in a comment.
+  logVolunteerEventsFireAndForget(
+    engine,
+    volunteerEventRowsFrom(
+      pointers.map((p) => ({ ...p, rationale: `${p.arm} match "${p.display}"` })),
+      { channel: 'reflex' },
+    ),
+  );
 }

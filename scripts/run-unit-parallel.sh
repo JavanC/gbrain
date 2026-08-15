@@ -133,6 +133,7 @@ for i in $(seq 1 "$N"); do
         env SHARD="$i/$N" \
         bash scripts/run-unit-shard.sh --max-concurrency="$INTRA_CONC" \
         > "$SHARD_LOG" 2>&1
+      rc=$?
     else
       env SHARD="$i/$N" \
         bash scripts/run-unit-shard.sh --max-concurrency="$INTRA_CONC" \
@@ -142,12 +143,21 @@ for i in $(seq 1 "$N"); do
         sleep 5 && kill -KILL "$pid" 2>/dev/null ) &
       cap_pid=$!
       wait "$pid" 2>/dev/null
+      # Capture the SHARD's status HERE. The two lines below reap the sleeper
+      # we just SIGTERMed, and `wait` on a signalled process yields 143 — so a
+      # trailing `rc=$?` after the `fi` reported 143 for every shard, making a
+      # fully green run exit non-zero on any machine lacking timeout/gtimeout
+      # (i.e. stock macOS without coreutils).
+      rc=$?
       kill "$cap_pid" 2>/dev/null
       wait "$cap_pid" 2>/dev/null
     fi
-    rc=$?
     echo "$rc" > "$LOG_DIR/shard-$i.exit"
-    [ "$rc" = "124" ] && echo "WEDGED" > "$LOG_DIR/shard-$i.wedged"
+    # 124 is GNU timeout's marker. The fallback path above kills with TERM then
+    # KILL, so a wedged shard surfaces as 143/137 there instead.
+    case "$rc" in
+      124|143|137) echo "WEDGED" > "$LOG_DIR/shard-$i.wedged" ;;
+    esac
   ) &
   SHARD_PIDS+=($!)
 done
