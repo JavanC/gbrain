@@ -74,6 +74,12 @@ interface DreamArgs {
    * until a follow-up CLI cleanup picks one. Supersedes PR #1559.
    */
   source: string | null;
+  /** Repeatable --propose-include <glob>: restrict propose_takes to matching slugs. */
+  proposeInclude: string[];
+  /** Repeatable --propose-exclude <glob>: drop matching slugs from propose_takes. */
+  proposeExclude: string[];
+  /** --propose-limit N: cap on MATCHING pages propose_takes processes. */
+  proposeLimit: number | null;
   /**
    * issue #1678: bounded single-hold backlog drain. `--drain` (currently only
    * for `--phase extract_atoms`) holds the cycle lock once and loops bounded
@@ -118,6 +124,18 @@ function collectFlagValues(args: string[], flag: string): string[] | null {
     if (args[i] !== flag) continue;
     const v = args[i + 1];
     if (v === undefined) return null; // flag at end of argv
+    values.push(v);
+  }
+  return values;
+}
+
+/** Collect every value of a repeatable flag. Returns null if any use is missing its value. */
+function collectRepeatableFlagValues(args: string[], flag: string): string[] | null {
+  const values: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== flag) continue;
+    const v = args[i + 1];
+    if (v === undefined) return null;
     values.push(v);
   }
   return values;
@@ -229,6 +247,27 @@ function parseArgs(args: string[]): DreamArgs {
   }
   const source = uniqSource[0] ?? uniqSourceId[0] ?? null;
 
+  const proposeInclude = collectRepeatableFlagValues(args, '--propose-include');
+  const proposeExclude = collectRepeatableFlagValues(args, '--propose-exclude');
+  if (proposeInclude === null) {
+    console.error('--propose-include <glob>: missing value');
+    process.exit(2);
+  }
+  if (proposeExclude === null) {
+    console.error('--propose-exclude <glob>: missing value');
+    process.exit(2);
+  }
+  const proposeLimitIdx = args.indexOf('--propose-limit');
+  let proposeLimit: number | null = null;
+  if (proposeLimitIdx !== -1) {
+    const raw = args[proposeLimitIdx + 1];
+    if (raw === undefined || !/^\d+$/.test(raw.trim()) || parseInt(raw, 10) <= 0) {
+      console.error(`--propose-limit must be a positive integer; got "${raw}"`);
+      process.exit(2);
+    }
+    proposeLimit = parseInt(raw, 10);
+  }
+
   // issue #1678: --drain [--window <seconds>]. Only extract_atoms is drainable
   // this wave (it has a real eligibility predicate; synthesize_concepts does
   // not — Codex #12). --drain with no --phase defaults to extract_atoms.
@@ -296,6 +335,9 @@ function parseArgs(args: string[]): DreamArgs {
     pull: args.includes('--pull'),
     phases,
     dir,
+    proposeInclude,
+    proposeExclude,
+    proposeLimit,
     help: args.includes('--help') || args.includes('-h'),
     inputFile,
     date,
@@ -426,6 +468,15 @@ Options:
                       --source default still runs the full cycle.
   --source-id <id>    Alias for --source. Matches the v0.37.7.0+
                       naming used by import/extract/graph-query.
+
+  --propose-include <glob>
+                      propose_takes: process only slugs matching this
+                      glob. Repeatable; ** crosses path segments.
+  --propose-exclude <glob>
+                      propose_takes: drop slugs matching this glob.
+                      Repeatable; applied after --propose-include.
+  --propose-limit <n> propose_takes: cap on pages actually processed
+                      (counts MATCHING pages, not rows scanned).
 
   --input <file>      Synthesize a specific transcript file (implies
                       --phase synthesize). Bypasses corpus-dir scan.
@@ -794,6 +845,11 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     synthFrom: opts.from ?? undefined,
     synthTo: opts.to ?? undefined,
     synthBypassDreamGuard: opts.bypassDreamGuard,
+    // propose_takes scoping. Empty arrays mean "no scoping" (the phase treats
+    // them as unset), so passing them unconditionally is safe.
+    proposeInclude: opts.proposeInclude,
+    proposeExclude: opts.proposeExclude,
+    ...(opts.proposeLimit !== null ? { proposeLimit: opts.proposeLimit } : {}),
     // issue #2860: exactly one phase is guaranteed here when opts.once is
     // set (parseArgs enforces --once requires a single explicit --phase).
     onceForPhase: opts.once ? opts.phases[0]! : undefined,

@@ -179,6 +179,10 @@ export interface ProposeTakesOpts extends BasePhaseOpts {
    * conversation_facts_backfill `once` semantics; never reads/writes config).
    */
   once?: boolean;
+  /** Include only page slugs matching at least one glob. Empty/unset = all. */
+  includeSlugs?: string[];
+  /** Exclude page slugs matching any glob. Applied after includeSlugs. */
+  excludeSlugs?: string[];
 }
 
 export interface ProposeTakesResult {
@@ -188,6 +192,8 @@ export interface ProposeTakesResult {
   proposals_inserted: number;
   /** Idempotency rows written for pages that extracted zero claims. */
   tombstones_written: number;
+  /** Pages dropped by includeSlugs/excludeSlugs before any work was done. */
+  pages_skipped_scope: number;
   budget_exhausted: boolean;
   /** True when the phase deadline fired before the page loop completed (partial result). */
   deadline_hit?: boolean;
@@ -231,6 +237,60 @@ interface ProposeTakesPageRow {
  * tiebreak for determinism. (Takeover of PR #1979's projection by
  * @shawnduggan.)
  */
+/**
+ * Translate a slug glob into an anchored regex. Slug-shaped, not filesystem-
+ * shaped: `*` and `?` stop at `/`, `**` crosses segments, and `**' + '/` also
+ * matches zero segments so `projects/**' + '/x` matches `projects/x`.
+ */
+function slugGlobToRegex(pattern: string): RegExp {
+  let regex = '^';
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === '*') {
+      const next = pattern[i + 1];
+      if (next === '*') {
+        if (pattern[i + 2] === '/') {
+          regex += '(?:.*/)?';
+          i += 2;
+        } else {
+          regex += '.*';
+          i++;
+        }
+      } else {
+        regex += '[^/]*';
+      }
+      continue;
+    }
+    if (ch === '?') { regex += '[^/]'; continue; }
+    if ('\\.[]{}()+-^$|'.includes(ch)) { regex += `\\${ch}`; continue; }
+    regex += ch;
+  }
+  regex += '$';
+  return new RegExp(regex);
+}
+
+function matchesAnySlugGlob(slug: string, patterns?: string[]): boolean {
+  if (!patterns || patterns.length === 0) return false;
+  const normalized = slug.replace(/\\/g, '/');
+  return patterns.some((pattern) => slugGlobToRegex(pattern).test(normalized));
+}
+
+/** include wins as a whitelist; exclude then subtracts from it. */
+export function isSlugIncluded(slug: string, include?: string[], exclude?: string[]): boolean {
+  if (include && include.length > 0 && !matchesAnySlugGlob(slug, include)) return false;
+  if (matchesAnySlugGlob(slug, exclude)) return false;
+  return true;
+}
+
+/**
+ * How many rows to pull when slug globs are active. The filter runs in JS
+ * (the glob grammar does not translate losslessly to SQL across both engines),
+ * so the query has to over-fetch to leave `pageLimit` matches after filtering.
+ * Bounded so a scoped run on a large brain stays a single cheap query — the
+ * projection is slug/source_id/compiled_truth only.
+ */
+const SCOPED_CANDIDATE_WINDOW = 2000;
+
 async function listCandidatePages(
   engine: BrainEngine,
   scope: ScopedReadOpts,
@@ -770,6 +830,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
       cache_misses: 0,
       proposals_inserted: 0,
       tombstones_written: 0,
+      pages_skipped_scope: 0,
       budget_exhausted: false,
       llm_calls_succeeded: 0,
       llm_calls_failed: 0,
@@ -791,7 +852,14 @@ class ProposeTakesPhase extends BaseCyclePhase {
     }
 
     // Load pages eligible for proposal. Source-scoped per BaseCyclePhase.
-    const pages = await listCandidatePages(engine, scope, pageLimit);
+    // Scope filtering happens per page below, so the SQL LIMIT must not be the
+    // user's pageLimit when globs are in play: fetching `pageLimit` rows and
+    // THEN dropping most of them processes a handful of pages instead of
+    // `pageLimit` matching ones. Widen the candidate window when scoping is
+    // active and stop once pageLimit pages have actually been processed.
+    const scoped = (opts.includeSlugs?.length ?? 0) > 0 || (opts.excludeSlugs?.length ?? 0) > 0;
+    const fetchLimit = scoped ? Math.max(pageLimit, SCOPED_CANDIDATE_WINDOW) : pageLimit;
+    const pages = await listCandidatePages(engine, scope, fetchLimit);
 
     if (opts.reporter) {
       opts.reporter.start('propose_takes.pages' as never, pages.length);
@@ -803,6 +871,12 @@ class ProposeTakesPhase extends BaseCyclePhase {
     const llmHalt = createGlobalLlmHaltTracker();
 
     for (const page of pages) {
+      // Stop once pageLimit pages have actually been PROCESSED. Under scoping
+      // the loop walks a wider candidate window, so counting processed pages
+      // (not iterations) is what makes `--propose-limit` mean "this many
+      // matching pages" rather than "this many rows looked at".
+      if (result.cache_hits + result.cache_misses >= pageLimit) break;
+
       // Phase deadline check. Break (not throw) so the phase returns a
       // partial result with deadline_hit:true; work already banked stays.
       const elapsedMs = Date.now() - phaseStartMs;
@@ -817,6 +891,14 @@ class ProposeTakesPhase extends BaseCyclePhase {
 
       result.pages_scanned += 1;
       this.tick(opts);
+
+      // Scope filter. Counted in pages_scanned above (the receipt's
+      // "considered" number) but costs nothing further — no hash, no fence
+      // parse, no LLM call.
+      if (!isSlugIncluded(page.slug, opts.includeSlugs, opts.excludeSlugs)) {
+        result.pages_skipped_scope += 1;
+        continue;
+      }
 
       // Skip pages that have NO prose body (e.g. metadata-only entity stubs).
       const body = page.compiled_truth ?? '';
