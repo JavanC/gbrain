@@ -39,6 +39,9 @@ write_policy:
         - tool-pattern
         - research
         - idea
+        - reference
+        - experience
+        - preference
     - prefix: people/
       types: [person]
     - prefix: companies/
