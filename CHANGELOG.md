@@ -2,6 +2,59 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.42.65.0] - 2026-08-15
+
+**Your brain repo can now tell agents how to write to it — and the server holds them to it.**
+
+If your source repo enforces house rules on its markdown (required frontmatter, which page types belong in which directory, how `connections` entries are written), an agent writing over MCP had no way to see them. It found out hours later, when a commit hook or CI refused the file — by which point the page was already in the database and the repo's auto-commit chain was stuck behind a backlog nobody noticed.
+
+A source can now declare those rules in its own `gbrain.yml` under `write_policy:`. Agents fetch them with the new `get_write_contract`, can dry-check a payload with `validate_page`, and `put_page` enforces the same rules **before** the write. A rejection changes nothing — no page row, no repo write-through, no auto-link — and comes back as machine-readable violations, each with a fix.
+
+Opt-in per source. A source that declares no policy behaves exactly as it always has, and one source's rules never reach another's.
+
+### How to use it
+
+Add a `write_policy:` block to your source repo's `gbrain.yml` — `templates/write-policy.example.yml` is a commented starting point — then:
+
+```bash
+gbrain write-contract
+```
+
+Before enabling, audit what it would reject. A policy stricter than your repo has ever been will stall the maintenance jobs that rewrite pages. `docs/guides/source-write-policy.md` covers the knob that matters most here (`slug_rules.scope`: ignore out-of-prefix pages, or refuse them).
+
+## To take advantage of v0.42.65.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor`
+warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **No agent-side migration is needed.** The write policy is opt-in and inert
+   until a source declares one; nothing changes for existing sources.
+3. **Verify the outcome:**
+   ```bash
+   gbrain write-contract
+   gbrain stats
+   ```
+   A source with no policy reports `enforced: false` — that is the correct
+   answer, not a failure.
+4. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+   This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+
+### Itemized changes
+
+- **Source write policy.** New `src/core/write-policy/` module: a versioned, opt-in page contract loaded from a source repo's own `gbrain.yml`. One validator serves both the preflight and the gate, so a preflight pass guarantees the write is not policy-rejected. Server-managed fields are filled on create and preserved on update, so a full-content replace can no longer silently drop `created`. A policy that fails to parse fails CLOSED.
+- **New read-scope operations.** `get_write_contract` (refuses any source outside the caller's grant) and `validate_page` (writes nothing).
+- **`put_page` gate.** Runs before the dry-run short-circuit; returns `policy_violation` with `written: false` instead of importing. `bypass_policy` is honored only for trusted local callers.
+
+No schema migrations.
 ## [0.42.64.0] - 2026-07-20
 
 ### Fixed

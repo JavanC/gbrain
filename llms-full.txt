@@ -798,6 +798,33 @@ check; until that lands upstream, ALWAYS run the check above before
 `/ship` invokes its first push or PR-create step.
 
 
+## FORK-LOCAL DEVIATIONS (JavanC/gbrain) — read before acting on any IRON RULE below
+
+This file is upstream's, inherited wholesale on every rebase. Two of its IRON
+RULES reference tooling that **does not exist in this fork**. They are upstream
+maintainer workflow, not decisions made here. Do not stall on them; do not try
+to satisfy them by hand-rolling an approximation of the missing tool.
+
+- **`/ship` does not exist here.** It is a private skill in the upstream
+  maintainer's own environment — not in `skills/`, not in `.claude/`, not in
+  `~/.claude/skills`, not anywhere in this repo. The instructions to "use
+  `/ship`" and "NEVER hand-roll ship operations" arrived via
+  `041d89ba` (v0.41.29.0) and `d4211f41` (v0.42.11.0), both authored upstream.
+  **In this fork, releases follow `docs/RELEASING.md` manually.** The version
+  trio (VERSION / package.json / CHANGELOG) and its 3-line audit still apply —
+  those are real, checkable, and CI enforces the first two. What you cannot run
+  is `/ship`'s wrapper: its pre-landing review, coverage audit, adversarial
+  review, and `/document-release` chaser. Say so explicitly in the PR body when
+  a release goes out without them, rather than implying they ran.
+- **The Conductor branch=workspace rule does not apply.** This is a plain
+  `git clone` + `git worktree` checkout with no Conductor installed. Branch
+  names here do not have to match directory names, and renaming a branch to
+  satisfy that rule would break the worktrees.
+
+When a rebase reintroduces conflicts around this block, keep the block. It
+exists because an agent (and the repo owner) lost time to a rule that could not
+be satisfied.
+
 ## Releasing
 
 Before any ship, read **[docs/RELEASING.md](docs/RELEASING.md)** in full. It carries the
@@ -805,6 +832,7 @@ full release + contributor process: pre-ship test requirements (`bun run ci:loca
 E2E lifecycle), the CHANGELOG voice + release-summary template, the "To take advantage of
 vX" self-repair block, version migrations, the GitHub Actions SHA refresh, PR conventions,
 and the community-PR-wave process. **Use `/ship` — never hand-roll a release.**
+(FORK: `/ship` does not exist here — see FORK-LOCAL DEVIATIONS above.)
 
 The ship-critical IRON RULES stay inline in this file (do NOT relocate them): the
 Version-locations table above (the 5-file sync + the 3-line VERSION/package.json/CHANGELOG
@@ -961,7 +989,9 @@ When the user's request matches an available skill, ALWAYS invoke it using the S
 tool as your FIRST action. Do NOT answer directly, do NOT use other tools first.
 The skill has specialized workflows that produce better results than ad-hoc answers.
 
-**NEVER hand-roll ship operations.** Do not manually run git commit + push + gh pr
+**NEVER hand-roll ship operations.** (FORK: `/ship` does not exist in this
+repo — see FORK-LOCAL DEVIATIONS above before acting on this paragraph.)
+Do not manually run git commit + push + gh pr
 create when /ship is available. /ship handles VERSION bump, CHANGELOG, document-release,
 pre-landing review, test coverage audit, and adversarial review. Manually creating a PR
 skips all of these. If the user says "commit and ship", "push and ship", "bisect and
@@ -972,7 +1002,7 @@ everything including the commits. If the branch name contains a version (e.g.
 Key routing rules:
 - Product ideas, "is this worth building", brainstorming → invoke office-hours
 - Bugs, errors, "why is this broken", 500 errors → invoke investigate
-- Ship, deploy, push, create PR, "commit and ship", "push and ship" → invoke ship
+- Ship, deploy, push, create PR, "commit and ship", "push and ship" → invoke ship (FORK: absent — follow `docs/RELEASING.md` by hand)
 - QA, test the site, find bugs → invoke qa
 - Code review, check my diff → invoke review
 - Update docs after shipping → invoke document-release
