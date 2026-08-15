@@ -34,6 +34,13 @@ import {
 } from '../src/core/sync-concurrency.ts';
 import { computePoolBudgetCheck } from '../src/commands/doctor.ts';
 
+// This file drives real sync runs with fixture sources. The failure ledger
+// resolves through gbrainPath(), so without isolation its fixtures land in the
+// operator's live ~/.gbrain/sync-failures.jsonl and show up in `gbrain doctor`
+// as a genuine unresolved failure.
+import { isolateGbrainHome } from './helpers/isolate-gbrain-home.ts';
+isolateGbrainHome();
+
 let engine: PGLiteEngine;
 let repoPath: string;
 
