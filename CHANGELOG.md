@@ -2,6 +2,70 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.45.18.1] - 2026-08-16
+
+**Fork rebase onto upstream v0.45.18.0.** The fork patchset was replayed commit
+by commit onto the current upstream base. Nineteen commits carried forward, six
+retired because upstream now covers them. Every surviving customization was
+re-checked against upstream first — the ones that were only missing wiring got
+the wiring, the ones that were upstream bugs got the fix, and the ones upstream
+still has no answer for stayed.
+
+Version numbering moves to the `.MICRO` slot for fork releases. Upstream owns
+`MAJOR.MINOR.PATCH`; the fork increments only the fourth segment on top of the
+upstream base it is rebased onto (here: upstream `0.45.18.0` → fork
+`0.45.18.1`). The previous scheme bumped the patch segment, which collided with
+upstream's own later releases on the same number.
+
+### Added
+- **Source-scoped page write contract.** A source repo can declare a page
+  contract in its `gbrain.yml`; `put_page` validates against it before anything
+  is written, and a violation is rejected with machine-readable `violations`
+  having written nothing. Two companion operations make it discoverable to
+  agents over MCP: `get_write_contract` (fetch the contract for a source) and
+  `validate_page` (dry-run a page body without writing). Opt-in — a source with
+  no `write_policy` block behaves exactly as before.
+- **Take-proposal review workflow.** `gbrain takes proposals`, `takes propose
+  review`, `takes propose apply`, and `takes propose reject` read, preview,
+  promote, and dismiss the proposals the dream cycle queues. The queue and the
+  producing phase already existed; nothing surfaced them.
+- **Async post-write enrichment for remote writes.** Remote `put_page` skips
+  inline link/timeline extraction by design, so graph edges never compounded
+  from agent writes. Enrichment is now queued durably per write and reconciled
+  by a worker, source-scoped. Opt-in via `writer.async_enrichment`.
+- **Per-phase model routing for `propose_takes`.** The phase now resolves
+  through `models.dream.propose_takes` like the other dream phases, so a single
+  expensive phase can run on a different model without moving the brain's
+  global chat model. With no override set it follows the gateway chat model
+  exactly as before, which keeps the recorded `model_id` honest.
+- **Slug scoping for `propose_takes`.** `gbrain dream --propose-include` /
+  `--propose-exclude` bound the phase to a subset of pages instead of the whole
+  candidate window.
+- **OpenAI GPT-5.5 recipe**, with its context window and pricing.
+
+### Fixed
+- **Worker registry timezone skew.** Process start times parsed from `ps` were
+  read in the host's local zone, so on any non-UTC machine worker liveness was
+  computed against a shifted clock.
+- **Lost reflex telemetry.** Volunteer-event registration went through a dynamic
+  import, so the write registered a microtask after the call returned. Anything
+  that drained immediately — a CLI exit path, a test awaiting the sink — saw
+  nothing pending and the event was dropped. Registration is now synchronous.
+- **`propose_takes` probed a model it wasn't going to run.** The provider
+  availability probe used the gateway default while the phase ran the resolved
+  model, so a brain configured for a non-default provider was skipped with a
+  `no_provider` message naming a model it never intended to use.
+- **Six Postgres E2E failures** in extract-atoms discovery, facts-recall
+  rendering, phantom redirect, OAuth serve, facts-fence reconcile, and sync lock
+  recovery. These only reproduce with a real `DATABASE_URL`.
+- **Test fixtures leaking into a live brain.** Sync failure-ledger fixtures
+  resolved their path through the real config dir and landed in the operator's
+  actual brain, where `gbrain doctor` then reported them as genuine unresolved
+  mismatches against files that do not exist.
+- **Config keys rejected by `gbrain config set`** despite being read at runtime:
+  the whole `pace.*` family (including the `pace.` prefix), `facts.extraction_enabled`,
+  `cycle.conversation_facts_backfill.*`, and `models.dream.propose_takes`.
+
 ## [0.45.18.0] - 2026-08-15
 
 **Today's agent spend now reads correctly at every hour, in every timezone.** The admin spend endpoint computed "today" against a naive timestamp that each database session reinterpreted in its own timezone — on any non-UTC session (a PGLite brain following the host clock, a timezone-configured Postgres role), the day boundary shifted by the offset and every evening's spend silently underreported as 0. The boundary is now a UTC instant, independent of session timezone, pinned by a regression test that exercises sessions 12 hours either side of UTC at any wall-clock hour.
