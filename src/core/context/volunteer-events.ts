@@ -20,6 +20,9 @@
 
 import type { BrainEngine } from './../engine.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
+// From the leaf, NOT from retrieval-reflex.ts: that file statically imports
+// this one (its pending write must register synchronously), so importing it
+// back would close a runtime cycle.
 import { reflexPointerRationale } from './reflex-rationale.ts';
 
 export const VOLUNTEER_EVENTS_TTL_DAYS = 90;
