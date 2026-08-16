@@ -7604,6 +7604,8 @@ const OP_AREAS: Record<string, string> = {
   get_versions: 'pages', revert_version: 'pages',
   resolve_slugs: 'pages', get_chunks: 'pages',
   put_raw_data: 'pages', get_raw_data: 'pages',
+  // source write contract — discovery + preflight for the put_page gate
+  get_write_contract: 'pages', validate_page: 'pages',
   // search
   search: 'search', query: 'search', search_by_image: 'search',
   // tags
