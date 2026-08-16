@@ -22,6 +22,7 @@ import {
   _resetWritePolicyCacheForTests,
   _resetWritePolicySlugCacheForTests,
 } from '../../src/core/write-policy/index.ts';
+import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 
 const databaseUrl = process.env.DATABASE_URL;
 const skip = !databaseUrl;
@@ -77,6 +78,9 @@ describe.skipIf(skip)('write policy on Postgres', () => {
     repoDir = mkdtempSync(join(tmpdir(), 'gbrain-write-policy-pg-'));
     writeFileSync(join(repoDir, 'gbrain.yml'), POLICY_YML);
     engine = new PostgresEngine();
+    // This file DELETEs from pages/sources; the guard is what keeps that off a
+    // real brain when DATABASE_URL happens to be ambient.
+    assertSafeE2eDatabaseUrl(databaseUrl!);
     await engine.connect({ database_url: databaseUrl! });
     await engine.initSchema();
     await engine.executeRaw('DELETE FROM pages WHERE source_id = $1', [SOURCE]);

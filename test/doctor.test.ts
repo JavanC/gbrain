@@ -6,7 +6,16 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
+import { isolateGbrainHome } from './helpers/isolate-gbrain-home.ts';
 import { logRerankFailure } from '../src/core/rerank-audit.ts';
+
+// checkSubagentCapability injects a fake engine for the models.* reads, but its
+// non-Anthropic branch calls loadConfig() — the config FILE, which no injected
+// engine can override. On a host whose real ~/.gbrain/config.json runs a
+// non-Anthropic chat_model with no ANTHROPIC_API_KEY set, the ok-path case
+// resolves to 'warn' against the operator's own brain. Green in CI (no config
+// file), red on this machine.
+isolateGbrainHome();
 
 describe('doctor command', () => {
   test('doctor module exports runDoctor', async () => {
