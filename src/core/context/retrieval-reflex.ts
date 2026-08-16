@@ -29,6 +29,7 @@ import { slugify } from '../entities/resolve.ts';
 import { stripTakesFence } from '../takes-fence.ts';
 import { stripFactsFence } from '../facts-fence.ts';
 import type { EntityCandidate } from './entity-salience.ts';
+import { reflexPointerRationale } from './reflex-rationale.ts';
 import { logVolunteerEventsFireAndForget, volunteerEventRowsFrom } from './volunteer-events.ts';
 
 /** Default cap on pointers injected per turn (config: retrieval_reflex_max_pointers). */
@@ -367,9 +368,11 @@ export function renderPointerBlock(pointers: ReflexPointer[]): string {
  * (volunteer-events.ts:logTurnContextDeliveryFireAndForget) so the two
  * channels' rationale strings can never drift.
  */
-export function reflexPointerRationale(p: ReflexPointer): string {
-  return `${p.arm} match "${p.display}"`;
-}
+// Lives in a leaf module so volunteer-events.ts can use it without importing
+// this file — see reflex-rationale.ts for why that matters. Re-exported here
+// because this is where callers expect to find it; imported at the top of this
+// file because a bare re-export would not bind the name for local use below.
+export { reflexPointerRationale };
 
 export function logDeliveredReflexPointers(engine: BrainEngine, pointers: ReflexPointer[]): void {
   if (!pointers.length) return;
@@ -379,8 +382,14 @@ export function logDeliveredReflexPointers(engine: BrainEngine, pointers: Reflex
   // resolved — a microtask later. Anything that drained immediately after the
   // call (the CLI's finishCliTeardown on an exit path, or a test awaiting the
   // sink) saw an empty set, returned "nothing pending", and the event was lost.
-  // The static import below is cycle-free: volunteer-events.ts only mentions
-  // retrieval-reflex in a comment.
+  // The static import is cycle-free because the one symbol volunteer-events.ts
+  // needs from this file — reflexPointerRationale — was moved to the leaf
+  // module reflex-rationale.ts, which both sides import. (An earlier version of
+  // this comment claimed volunteer-events.ts "only mentions retrieval-reflex in
+  // a comment"; that was wrong — it statically imported the template, so this
+  // import did close a runtime cycle. ESM tolerated it because the binding is
+  // only read at call time, but the justification was false.) Its remaining
+  // reference to this file is a type-only inline import, which erases.
   logVolunteerEventsFireAndForget(
     engine,
     volunteerEventRowsFrom(
