@@ -406,7 +406,6 @@ describe('gbrain takes proposals', () => {
     const engine = {
       executeRaw: async (sql: string, params: unknown[]) => {
         captured.push({ sql, params });
-        if (sql.includes('FROM sources')) return [{ local_path: brainDir }];
         if (sql.includes('FROM take_proposals')) return [proposalRow];
         return [];
       },

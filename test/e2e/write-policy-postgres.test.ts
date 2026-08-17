@@ -16,6 +16,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
+import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { operations } from '../../src/core/operations.ts';
 import type { Operation, OperationContext } from '../../src/core/operations.ts';
 import {
@@ -77,6 +78,7 @@ describe.skipIf(skip)('write policy on Postgres', () => {
     repoDir = mkdtempSync(join(tmpdir(), 'gbrain-write-policy-pg-'));
     writeFileSync(join(repoDir, 'gbrain.yml'), POLICY_YML);
     engine = new PostgresEngine();
+    assertSafeE2eDatabaseUrl(databaseUrl!);
     await engine.connect({ database_url: databaseUrl! });
     await engine.initSchema();
     await engine.executeRaw('DELETE FROM pages WHERE source_id = $1', [SOURCE]);
