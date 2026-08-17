@@ -746,16 +746,6 @@ class ProposeTakesPhase extends BaseCyclePhase {
       opts.deadlineMs ?? resolveProposeTakesDeadlineMs(opts.deadlineAtMs, Date.now());
     const phaseStartMs = Date.now();
 
-    // Phase-local model routing. `models.dream.propose_takes` exists so this
-    // phase can run a different (usually stronger) model than the brain's
-    // global chat model without switching `models.chat` for everything else.
-    //
-    // The fallback follows the GATEWAY CHAT MODEL rather than a hardcoded id:
-    // upstream deliberately made the cycle phases record the model they
-    // actually run (`grade_takes` / `calibration_profile` moved the same way),
-    // and a hardcoded fallback would report a model the phase never used
-    // whenever the config key is unset. So: config key wins when set,
-    // otherwise upstream's behavior is preserved exactly.
     // Phase-local model routing, layered ON TOP of upstream's behavior rather
     // than replacing it. `models.dream.propose_takes` exists so this phase can
     // run a stronger model than the brain's global chat model without changing
