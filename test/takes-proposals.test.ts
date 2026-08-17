@@ -6,10 +6,22 @@ import { runTakes } from '../src/commands/takes.ts';
 
 type CapturedQuery = { sql: string; params: unknown[] };
 
-function buildEngine(rows: Array<Record<string, unknown>>, captured: CapturedQuery[]) {
+/**
+ * `localPath` models the `sources.local_path` row the takes writer reads to
+ * decide WHERE a page lives: a source with its own working tree files pages at
+ * that tree's root, which is how this brain is actually laid out. Omit it and
+ * the resolver falls back to the multi-source `.sources/<id>/` nesting, which
+ * is correct behavior but not what these flat fixtures build.
+ */
+function buildEngine(
+  rows: Array<Record<string, unknown>>,
+  captured: CapturedQuery[],
+  localPath?: string,
+) {
   return {
     executeRaw: async (sql: string, params: unknown[]) => {
       captured.push({ sql, params });
+      if (sql.includes('FROM sources')) return [{ local_path: localPath ?? null }];
       return rows;
     },
   } as any;
@@ -142,7 +154,7 @@ describe('gbrain takes proposals', () => {
         predicted_brier: null,
         predicted_brier_bucket_n: null,
       },
-    ], captured);
+    ], captured, brainDir);
 
     const out = await captureStdout(() => runTakes(engine, [
       'propose',
@@ -198,6 +210,7 @@ describe('gbrain takes proposals', () => {
     const engine = {
       executeRaw: async (sql: string, params: unknown[]) => {
         captured.push({ sql, params });
+        if (sql.includes('FROM sources')) return [{ local_path: brainDir }];
         if (sql.includes('FROM take_proposals')) return [proposalRow];
         if (sql.includes('FROM pages')) return [{ id: 99 }];
         return [];
@@ -264,6 +277,7 @@ describe('gbrain takes proposals', () => {
     const engine = {
       executeRaw: async (sql: string, params: unknown[]) => {
         captured.push({ sql, params });
+        if (sql.includes('FROM sources')) return [{ local_path: brainDir }];
         if (sql.includes('FROM take_proposals')) return proposalRows;
         if (sql.includes('FROM pages')) return [{ id: 50 }];
         return [];
@@ -392,6 +406,7 @@ describe('gbrain takes proposals', () => {
     const engine = {
       executeRaw: async (sql: string, params: unknown[]) => {
         captured.push({ sql, params });
+        if (sql.includes('FROM sources')) return [{ local_path: brainDir }];
         if (sql.includes('FROM take_proposals')) return [proposalRow];
         return [];
       },
@@ -464,6 +479,7 @@ describe('gbrain takes proposals', () => {
     const engine = {
       executeRaw: async (sql: string, params: unknown[]) => {
         captured.push({ sql, params });
+        if (sql.includes('FROM sources')) return [{ local_path: brainDir }];
         if (sql.includes('FROM take_proposals') && params[0] === 501) return [rows[0]];
         if (sql.includes('FROM take_proposals') && params[0] === 502) return [rows[1]];
         return [];
@@ -541,6 +557,7 @@ describe('gbrain takes proposals', () => {
     const engine = {
       executeRaw: async (sql: string, params: unknown[]) => {
         captured.push({ sql, params });
+        if (sql.includes('FROM sources')) return [{ local_path: brainDir }];
         if (sql.includes('FROM take_proposals') && params[0] === 601) return [rows[0]];
         if (sql.includes('FROM take_proposals') && params[0] === 602) return [rows[1]];
         if (sql.includes('FROM pages')) return [{ id: 77 }];
