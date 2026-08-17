@@ -733,10 +733,15 @@ class ProposeTakesPhase extends BaseCyclePhase {
     // moved the same way), so with no override we keep exactly that.
     const phaseModelOverride = (await engine.getConfig('models.dream.propose_takes'))?.trim();
     const resolvedModel = (opts.model?.trim() || phaseModelOverride)
+      // resolveModel returns at its cliFlag or configKey step here — one of the
+      // two is non-empty by construction — so it only does alias expansion.
+      // `fallback` is required by the type but unreachable from this call; it
+      // mirrors the no-override branch below so the two can't drift. No `tier`:
+      // that sits further down the chain and would only ever substitute a model
+      // this phase never ran.
       ? await (await import('../model-config.ts')).resolveModel(engine, {
         cliFlag: opts.model,
         configKey: 'models.dream.propose_takes',
-        tier: 'reasoning',
         fallback: getChatModel(),
       })
       : getChatModel();
