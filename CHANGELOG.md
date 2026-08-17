@@ -2,6 +2,58 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.46.15.1] - 2026-08-18
+
+**Fork patchset rebased onto upstream v0.46.15.0, six patches lighter.**
+The private patchset drops from 22 commits to 16: five carried fixes turned
+out to be things upstream now ships, and one fixed a bug that cannot occur.
+Everything that survives is a real divergence, and every surviving patch was
+re-verified against current upstream rather than assumed.
+
+### Changed
+- **The source write policy moved with upstream's ops decomposition.** The
+  `put_page` contract gate, `get_write_contract` and `validate_page` now live
+  in `src/core/ops/pages.ts` alongside the op they guard, following upstream's
+  split of the monolithic `operations.ts` into per-area modules. Behavior is
+  unchanged; the ops declare `area: 'pages'` so the generated tool catalog
+  files them beside `put_page`.
+- **Take-proposal promotion routes through upstream's shared takes writer.**
+  Accepting a proposal now calls `addTakeToPage`, which brings the fence
+  round-trip guard, the source-aware write root, and the "failed DB mirror is
+  a warning, not a duplicate markdown row" contract that the fork's own inline
+  write never had. The proposal row flips to accepted only after the take is
+  durable on disk, and only while still pending, so a concurrent reviewer
+  cannot double-promote.
+- **The takes file-path resolver is exported** so the accept preview reads the
+  same file the writer would touch instead of reimplementing the
+  source-`local_path` precedence.
+
+### Fixed
+- **Five upstream `takes` fixes that the replay had silently reverted.**
+  Commits authored against an older `takes.ts` reinstated pre-fix bodies for
+  every region they touched — `takes list` parsed as a page slug again, the
+  brain-wide listing lost its scope label and page prefix, `takes resolve
+  --by` fell back to a hardcoded holder, and `takes extract --json` lost both
+  output paths. Caught by a whole-file removal audit against upstream, which
+  is now the standard closing step of a rebase.
+- **`propose_takes` no longer advertises a model tier it cannot reach.** The
+  override branch is entered only when a CLI flag or config key is set, so the
+  resolver returns before the tier step; declaring one described a fallback the
+  phase would never run.
+
+### Removed
+- **The worker-registry timezone patch.** `execFileSync` passes `process.env`
+  to `ps`, and `Date.parse` reads the same `TZ` — the two cannot disagree, so
+  the skew it corrected is not reachable. Nothing in gbrain, this host's
+  launchd jobs, or the shell sets `TZ` at runtime.
+- **The test `GBRAIN_HOME` isolation helper.** Upstream v0.46.8.0 ships
+  `test/helpers/gbrain-home-preload.ts` in `bunfig.toml`'s preload list, which
+  covers every test file at once instead of the fork's eight opt-in call sites.
+- **The `cycle.conversation_facts_backfill.*` config registrations.**
+  Upstream's `cycle.` prefix already accepts them.
+- **Five of the six Postgres E2E repairs**, fixed upstream between 0.45.18.0
+  and 0.46.6.0; the sixth landed upstream as a direct merge.
+
 ## [0.46.15.0] - 2026-08-16
 
 **The brain now recognizes people the way you actually mention them.**
