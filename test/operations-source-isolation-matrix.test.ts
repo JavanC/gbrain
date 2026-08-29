@@ -105,6 +105,12 @@ const MATRIX: Row[] = [
   { name: 'synthesize', mode: 'skip', reason: 'LLM-dependent; keyless envs cannot run it — verbs conformance owns the error path' },
   { name: 'think', mode: 'skip', reason: 'LLM-dependent; think-source-isolation-pglite e2e owns its scoping' },
   { name: 'search_by_image', mode: 'skip', reason: 'needs image-embedding infra; cross-modal suites own it' },
+  // javan fork: write-policy ops (item 1 in the fork's patchset). Both take
+  // an optional source_id and refuse a source outside the caller's grant
+  // (resolveContractSourceId); the cross-source refusal is already exercised
+  // for scalar and federated callers in test/write-policy-ops.test.ts.
+  { name: 'get_write_contract', mode: 'skip', reason: 'javan fork op; cross-source refusal owned by test/write-policy-ops.test.ts' },
+  { name: 'validate_page', mode: 'skip', reason: 'javan fork op; source-scoped policy lookup owned by test/write-policy-ops.test.ts' },
   { name: 'volunteer_context', mode: 'skip', reason: 'session/reflex machinery; volunteer-context suites own scoping' },
   { name: 'context_pack', mode: 'skip', reason: 'verbs conformance owns it; budget-packed composite of scoped reads' },
   { name: 'delta', mode: 'skip', reason: 'session-cursor verb; conformance suite owns it — page-delta arm is session-coupled (probe: fresh writes not listed)' },

@@ -244,4 +244,12 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/ingestion-roundtrip.test.ts",
     "test/e2e/serve-http-ingest-webhook.test.ts",
   ],
+  // javan fork: source write-policy gate (item 1) and async post-write
+  // enrichment (item 5) — both fork-only, no upstream analog.
+  "src/core/write-policy/**": [
+    "test/e2e/write-policy-postgres.test.ts",
+    "test/e2e/write-policy-put-page-pglite.test.ts",
+  ],
+  "src/core/post-write-enrichment.ts": ["test/e2e/post-write-enrichment-postgres.test.ts"],
+  "src/core/post-write-enrichment-submit.ts": ["test/e2e/post-write-enrichment-postgres.test.ts"],
 };

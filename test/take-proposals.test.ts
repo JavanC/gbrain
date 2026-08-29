@@ -301,23 +301,30 @@ describe('CLI dispatcher (#2411 no-fallthrough)', () => {
   });
 
   test('`takes propose --json` returns rows', async () => {
+    // The fork's `takes proposals`/bare `takes propose` --json envelope is
+    // {filters, count, proposals: [...]} rather than a bare array — same
+    // data, richer envelope (source/status/etc. filters echoed back).
     const out = await captureStdout(() => runTakes(engine, ['propose', '--json', '--limit', '100']));
     const parsed = JSON.parse(out);
-    expect(Array.isArray(parsed)).toBe(true);
-    expect(parsed.some((r: { claim_text: string }) => r.claim_text === 'cli: pending list claim')).toBe(true);
+    expect(Array.isArray(parsed.proposals)).toBe(true);
+    expect(parsed.proposals.some((r: { claim_text: string }) => r.claim_text === 'cli: pending list claim')).toBe(true);
   });
 
   test('`takes propose --accept <id>` promotes and reports the fence row', async () => {
     const id = await insertProposal({ slug: 'companies/acme-example', claim: 'cli: accept me' });
+    // The fork's --accept batches by id and reports `<slug> <= proposal #<id>`
+    // rather than upstream's singular "Accepted proposal #N" — same
+    // lifecycle, different wording (fork item 2 predates and diverges from
+    // upstream's own #4102/#2411 cmdPropose).
     const out = await captureStdout(() => runTakes(engine, ['propose', '--accept', String(id)]));
-    expect(out).toContain(`Accepted proposal #${id}`);
+    expect(out).toContain(`<= proposal #${id}`);
     expect((await proposalRow(id)).status).toBe('accepted');
   });
 
   test('`takes propose --reject <id>` rejects', async () => {
     const id = await insertProposal({ slug: 'companies/acme-example', claim: 'cli: reject me' });
     const out = await captureStdout(() => runTakes(engine, ['propose', '--reject', String(id)]));
-    expect(out).toContain(`Rejected proposal #${id}`);
+    expect(out).toContain(`<= proposal #${id}`);
     expect((await proposalRow(id)).status).toBe('rejected');
   });
 });

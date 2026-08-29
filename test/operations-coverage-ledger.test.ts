@@ -35,6 +35,9 @@ const LEDGER: Record<string, string> = {
   forget: 'test/memory-verbs-conformance.test.ts',
   get_page: 'test/get-page-federated-scope.test.ts',
   put_page: 'test/put-page-provenance.test.ts',
+  // javan fork: source write-policy gate (item 1 in the fork's patchset).
+  get_write_contract: 'test/write-policy-ops.test.ts',
+  validate_page: 'test/write-policy-ops.test.ts',
   delete_page: 'test/pages-source-scoping-4329.test.ts',
   list_pages: 'test/list-pages-truncation.test.ts',
   restore_page: 'test/pages-source-scoping-4329.test.ts',

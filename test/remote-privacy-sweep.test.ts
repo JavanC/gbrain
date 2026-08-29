@@ -181,6 +181,9 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   // put_page-into-fence-bearing-page restoration-echo class is explicitly
   // NOT covered here (write-side sweep TODO).
   put_page: { slug: 'notes/sweep-fresh-write', content: '# Fresh write\n\nNew content.\n' },
+  // javan fork: validate_page previews a put_page payload without writing —
+  // same fresh-slug discipline as the mutating ops above.
+  validate_page: { slug: 'notes/sweep-fresh-write', content: '# Fresh write\n\nNew content.\n' },
   remember: { fact: 'fresh sweep fact', provenance: 'sweep', entity: 'people/sweep-fresh-entity' },
   capture: { content: 'fresh sweep capture' },
   add_tag: { slug: WORLD_PAGE_SLUG, tag: 'sweep-tag' },
@@ -235,6 +238,11 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   // reads that succeed without corpus-marker requirement
   get_tags: 'ok',
   get_links: 'ok',
+  // javan fork: write-policy ops (item 1). No policy is configured for the
+  // seeded sweep corpus, so both report the no-policy shape — succeeds,
+  // no corpus-marker requirement.
+  get_write_contract: 'ok',
+  validate_page: 'ok',
   list_link_sources: 'ok',
   search_modes: 'ok',
   get_brain_identity: 'ok',
