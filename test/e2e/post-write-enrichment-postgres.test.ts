@@ -1,4 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { hasDatabase, setupDB, teardownDB, getEngine } from './helpers.ts';
 import { operations, type OperationContext } from '../../src/core/operations.ts';
 import { MinionQueue } from '../../src/core/minions/queue.ts';
@@ -25,10 +28,14 @@ describeE2E('post-write enrichment queue on Postgres', () => {
     await engine.setConfig('auto_link', 'true');
     await engine.setConfig('auto_timeline', 'true');
     await engine.setConfig('writer.async_enrichment', 'true');
+    // put_page throws storage_error on any un-written page including
+    // repo_not_found, so the source needs a REAL directory on disk.
+    const alphaLocalPath = mkdtempSync(join(tmpdir(), 'gbrain-post-write-enrichment-pg-'));
     await engine.executeRaw(
       `INSERT INTO sources (id, name, local_path)
-       VALUES ('alpha', 'alpha', '/tmp/alpha')
-       ON CONFLICT (id) DO NOTHING`,
+       VALUES ('alpha', 'alpha', $1)
+       ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path`,
+      [alphaLocalPath],
     );
     await engine.putPage('concepts/async-pg-target', {
       type: 'concept',
