@@ -977,6 +977,7 @@ const get_write_contract: Operation = {
     },
   },
   scope: 'read',
+  area: 'pages',
   handler: async (ctx, p) => {
     const resolved = resolveContractSourceId(ctx, p.source_id);
     if ('error' in resolved) return resolved;
@@ -1002,6 +1003,7 @@ const validate_page: Operation = {
     content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
   },
   scope: 'read',
+  area: 'pages',
   handler: async (ctx, p) => {
     const slug = p.slug as string;
     const { runWritePolicyGate } = await import('../write-policy/index.ts');
