@@ -137,6 +137,12 @@ function buildMockEngine(pageCount: number): { engine: BrainEngine; captured: Ca
   const captured: CapturedSql[] = [];
   const engine = {
     kind: 'pglite',
+    // Fork addition: propose_takes reads models.dream.propose_takes to route
+    // this phase through a per-phase model override (item 3 in the fork's
+    // patchset). No override configured here — falls back to getChatModel().
+    async getConfig(): Promise<string | undefined> {
+      return undefined;
+    },
     async executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> {
       captured.push({ sql, params: params ?? [] });
       if (sql.includes('SELECT slug, source_id, compiled_truth')) {

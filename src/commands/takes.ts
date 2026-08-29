@@ -1077,8 +1077,8 @@ Subcommands:
   takes proposals [--status pending] [--source-id ID] [--page slug] [--run-id ID]
                   [--who holder] [--kind k] [--limit N] [--json]
                                           Review take_proposals queue without writing
-  takes propose --review [same flags as proposals]
-                                          Alias for takes proposals
+  takes propose [--review] [same flags as proposals]
+                                          List pending proposals (bare call or --review; alias for takes proposals)
   takes propose --accept <id[,id...]> [--dry-run] [--dir <path>] [--json]
                                           Promote pending proposals into ## Takes (markdown + DB)
                                           --dry-run previews without writing
@@ -1120,12 +1120,12 @@ Common flags:
     case 'embed':       return cmdEmbed(engine, rest);
     case 'proposals':   return cmdProposals(engine, rest);
     case 'propose':
-      if (rest.includes('--review')) return cmdProposals(engine, rest.filter(a => a !== '--review'));
       if (rest.includes('--accept')) return cmdProposeAccept(engine, rest);
       if (rest.includes('--reject')) return cmdProposeReject(engine, rest);
       if (rest.includes('--apply-review')) return cmdProposeApplyReview(engine, rest);
-      console.error('Usage: gbrain takes propose --review [same flags as proposals]');
-      process.exit(1);
+      // Bare `takes propose` (or `--review`) lists the pending queue — same
+      // filters as `takes proposals`, defaulting to --status pending.
+      return cmdProposals(engine, rest.filter(a => a !== '--review'));
     case 'add':         return cmdAdd(engine, rest, await resolveTakesSourceId(engine));
     case 'update':      return cmdUpdate(engine, rest, await resolveTakesSourceId(engine));
     case 'supersede':   return cmdSupersede(engine, rest, await resolveTakesSourceId(engine));

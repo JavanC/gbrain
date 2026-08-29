@@ -1,4 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
@@ -7,6 +10,7 @@ import { registerBuiltinHandlers } from '../src/commands/jobs.ts';
 import { resetGateway } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
+let alphaLocalPath: string;
 const putPage = operations.find((op) => op.name === 'put_page')!;
 
 function remoteCtx(): OperationContext {
@@ -24,6 +28,10 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  // put_page now throws storage_error on any un-written page (including a
+  // missing/absent local_path directory), so the source needs a REAL dir on
+  // disk — a bogus /tmp/alpha no longer silently DB-only-succeeds.
+  alphaLocalPath = mkdtempSync(join(tmpdir(), 'gbrain-post-write-enrichment-'));
 });
 
 beforeEach(async () => {
@@ -35,8 +43,9 @@ beforeEach(async () => {
   await engine.setConfig('writer.async_enrichment', 'true');
   await engine.executeRaw(
     `INSERT INTO sources (id, name, local_path)
-     VALUES ('alpha', 'alpha', '/tmp/alpha')
-     ON CONFLICT (id) DO NOTHING`,
+     VALUES ('alpha', 'alpha', $1)
+     ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path`,
+    [alphaLocalPath],
   );
   await engine.putPage('concepts/async-enrich-target', {
     type: 'concept',
@@ -68,13 +77,16 @@ describe('remote put_page asynchronous enrichment', () => {
         '- **2026-06-29** | Async enrichment shipped.',
       ].join('\n'),
     }) as {
-      auto_links: { skipped: string };
-      auto_timeline: { skipped: string };
+      auto_links: { skipped: string; hint?: string };
+      auto_timeline: { skipped: string; hint?: string };
       async_enrichment: { queued: boolean; job_id: number };
     };
 
-    expect(result.auto_links).toEqual({ skipped: 'remote' });
-    expect(result.auto_timeline).toEqual({ skipped: 'remote' });
+    // #4525: skip responses now carry a hint explaining why. Assert the
+    // skip reason, not the whole shape, so upstream additive fields here
+    // don't need chasing.
+    expect(result.auto_links.skipped).toBe('remote');
+    expect(result.auto_timeline.skipped).toBe('remote');
     expect(result.async_enrichment.queued).toBe(true);
 
     const queue = new MinionQueue(engine);

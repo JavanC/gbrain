@@ -87,10 +87,13 @@ describe('propose_takes → takes propose drain (#4102)', () => {
     expect(listed).toContain(CLAIM);
     expect(listed).toContain(`#${pending.id}`);
 
-    // 3. Accept: promotes into the markdown fence + DB mirror.
+    // 3. Accept: promotes into the markdown fence + DB mirror. (The fork's
+    // `takes propose --accept` batches by comma-separated id and reports
+    // `<slug>#<row> <= proposal #<id>` rather than upstream's singular
+    // "Accepted proposal #N" — same lifecycle, different wording.)
     const accepted = await captureStdout(() =>
       runTakes(engine, ['propose', '--accept', String(pending.id)]));
-    expect(accepted).toContain(`Accepted proposal #${pending.id}`);
+    expect(accepted).toContain(`<= proposal #${pending.id}`);
 
     const fence = parseTakesFence(readFileSync(join(repo, `${SLUG}.md`), 'utf-8'));
     const row = fence.takes.find((t) => t.claim === CLAIM);
@@ -103,9 +106,12 @@ describe('propose_takes → takes propose drain (#4102)', () => {
     expect(acted.status).toBe('accepted');
     expect(acted.promoted_row_num).toBe(row!.rowNum);
 
-    // 4. The queue is drained: nothing pending remains.
+    // 4. The queue is drained: nothing pending remains. (The fork's bare
+    // `takes propose` routes to `takes proposals`' listing, which reports
+    // "No take proposals found" rather than upstream's "No pending take
+    // proposals" — same empty-queue state, different wording.)
     const after = await captureStdout(() => runTakes(engine, ['propose']));
-    expect(after).toContain('No pending take proposals');
+    expect(after).toContain('No take proposals found');
   });
 
   test('config off switch stops the phase against a real engine; --once bypasses', async () => {
