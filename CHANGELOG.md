@@ -2,6 +2,45 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.47.4.1] - 2026-08-29
+
+Fork rebase onto upstream v0.47.4.0 (from v0.46.15.0), 38 commits. Javan's
+personal patchset carries forward as 20 commits (2 retired this round; see
+below), replayed with a whole-file audit against upstream on every touched
+file to catch silent reverts.
+
+### Retired this round (upstream now covers them)
+- Individual `pace.*` config-key registrations and the standalone
+  `facts.extraction_enabled` registration — both now covered by upstream's
+  `pace.` prefix entry in `KNOWN_CONFIG_KEY_PREFIXES` and its own
+  `facts.extraction_enabled` row (landed via PR #4195, v0.46.25.0).
+- The OpenAI GPT-5.5 recipe patch — upstream's own `openai` recipe now lists
+  `gpt-5.5` (and has since moved on to a `gpt-5.6` baseline with current
+  pricing); the fork's now-stale numbers were dropped in favor of upstream's.
+
+### Fixed during replay (upstream fixes the cherry-picks silently reverted)
+Caught by the whole-file audit, not by failing tests — same failure class as
+the two prior rebases:
+- `takes list` lost #2079's optional-slug dispatch entirely (fell through to
+  the slug-lookup default, reintroducing the original bug).
+- `takes resolve --by` fell back to a hardcoded name instead of
+  `resolveOwnerHolder`.
+- `takes extract --from-pages --json` referenced an undeclared `json` local.
+
+### Notes
+- Upstream's own `takes propose` (bare list / `--accept` / `--reject`) is now
+  functionally close to the fork's take-proposal review CLI (item 2 in the
+  fork-maintenance tracking doc). Kept the fork's richer surface
+  (`--review`/`--apply-review`/`--dry-run`) for this rebase and removed
+  upstream's shadowed/dead `cmdPropose`; full consolidation deferred to a
+  dedicated pass.
+- Upstream's `sweep.ts` (#4196, v0.46.25.0) now correctly reconciles removed
+  links and honors its own watermark, closing two of the three reasons the
+  fork's async post-write enrichment queue exists — but it is still not
+  wired into `serve-http` (only `serve`'s stdio idle tick), so the fork's
+  queue is still the only mechanism that fires for this deployment's HTTP
+  MCP host.
+
 ## [0.47.4.0] - 2026-08-28
 
 **Your brain's remote surface now behaves the same everywhere: reads stay
