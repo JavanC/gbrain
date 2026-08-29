@@ -3,6 +3,7 @@
  *
  * Subcommands:
  *   takes <slug>                          — list takes for a page
+ *   takes list                            — list all active takes (#2079)
  *   takes search "<query>" [--who h]       — keyword search across all takes
  *   takes add <slug> ...flags              — append a take (markdown + DB)
  *   takes update <slug> --row N ...flags   — update mutable fields
@@ -257,11 +258,10 @@ function loadReviewDecisions(path: string): TakeProposalReviewDecision[] {
 // --- Subcommands ---
 
 async function cmdList(engine: BrainEngine, args: string[]): Promise<void> {
-  const slug = args[0];
-  if (!slug) {
-    console.error('Usage: gbrain takes <slug> [--json]');
-    process.exit(1);
-  }
+  // #2079: slug is optional. `gbrain takes list` (no slug) lists ALL active
+  // takes — CLI parity with the takes_list operation. A leading flag is not
+  // a slug.
+  const slug = args[0] && !args[0].startsWith('-') ? args[0] : undefined;
   const json = flagPresent(args, '--json');
   const holder = flagValue(args, '--who');
   const kind = flagValue(args, '--kind') as string | undefined;
@@ -281,17 +281,19 @@ async function cmdList(engine: BrainEngine, args: string[]): Promise<void> {
     return;
   }
 
+  const scope = slug ?? 'this brain';
   if (takes.length === 0) {
-    console.log(`No takes on ${slug}.`);
+    console.log(`No takes on ${scope}.`);
     return;
   }
-  console.log(`# Takes on ${slug}\n`);
+  console.log(`# Takes on ${scope}\n`);
   for (const t of takes) {
     const tag = t.active ? '' : ' [superseded]';
     const w = Number(t.weight).toFixed(2);
     const since = t.since_date ?? '';
     const src = t.source ? ` — ${t.source}` : '';
-    console.log(`#${t.row_num} [${t.kind} • ${t.holder} • w=${w}${since ? ` • ${since}` : ''}]${tag}\n  ${t.claim}${src}\n`);
+    const where = slug ? '' : `${t.page_slug} `;
+    console.log(`${where}#${t.row_num} [${t.kind} • ${t.holder} • w=${w}${since ? ` • ${since}` : ''}]${tag}\n  ${t.claim}${src}\n`);
   }
 }
 
@@ -913,7 +915,7 @@ async function cmdResolve(engine: BrainEngine, args: string[], sourceId?: string
   // --evidence is the v0.30.0 alias for --source on the resolve subcommand
   // (semantic clarity: "what evidence resolved this bet?").
   const source = flagValue(args, '--evidence') ?? flagValue(args, '--source');
-  const resolvedBy = flagValue(args, '--by') ?? 'garry';
+  const resolvedBy = flagValue(args, '--by') ?? resolveOwnerHolder({ configValue: await engine.getConfig('emotional_weight.user_holder') });
   const dirArg = flagValue(args, '--dir');
   const brainDir = await resolveBrainDir(engine, dirArg ?? null);
 
@@ -1057,93 +1059,6 @@ async function cmdCalibration(engine: BrainEngine, args: string[]): Promise<void
   }
 }
 
-/**
- * #2411 / #4102 — `gbrain takes propose` drains the take_proposals queue the
- * propose_takes cycle phase fills. Bare invocation lists pending proposals;
- * --accept promotes one into the page's takes fence via the shared
- * write-through core (D17: the ONLY queue→canonical path); --reject dismisses.
- * Before this command existed the dispatcher parsed `propose` as a page slug
- * and printed "No takes on propose." with exit 0 — a dead-end queue.
- */
-async function cmdPropose(engine: BrainEngine, args: string[], sourceId: string): Promise<void> {
-  const json = flagPresent(args, '--json');
-  const acceptRaw = flagValue(args, '--accept');
-  const rejectRaw = flagValue(args, '--reject');
-  if (acceptRaw !== undefined && rejectRaw !== undefined) {
-    console.error('Error: --accept and --reject are mutually exclusive (choose one).');
-    process.exit(1);
-  }
-
-  const parseId = (raw: string, flag: string): number => {
-    const id = parseInt(raw, 10);
-    if (!Number.isFinite(id) || id <= 0 || String(id) !== raw.trim()) {
-      console.error(`Invalid ${flag} "${raw}". Expected a proposal id (from \`gbrain takes propose\`).`);
-      process.exit(1);
-    }
-    return id;
-  };
-
-  const actedBy = resolveOwnerHolder({
-    configValue: await engine.getConfig('emotional_weight.user_holder'),
-  });
-
-  if (acceptRaw !== undefined) {
-    const id = parseId(acceptRaw, '--accept');
-    const dirArg = flagValue(args, '--dir');
-    const brainDir = await resolveBrainDir(engine, dirArg ?? null);
-    try {
-      const { proposal, rowNum } = await acceptProposal({ engine, brainDir, sourceId, actedBy }, id);
-      console.log(`Accepted proposal #${id} → take #${rowNum} on ${proposal.page_slug}.`);
-    } catch (err) {
-      if (err instanceof TakeProposalError) {
-        console.error(err.message);
-        process.exit(1);
-      }
-      exitTakesError(err);
-    }
-    return;
-  }
-
-  if (rejectRaw !== undefined) {
-    const id = parseId(rejectRaw, '--reject');
-    try {
-      const proposal = await rejectProposal({ engine, sourceId, actedBy }, id);
-      console.log(`Rejected proposal #${id} (${proposal.page_slug}).`);
-    } catch (err) {
-      if (err instanceof TakeProposalError) {
-        console.error(err.message);
-        process.exit(1);
-      }
-      throw err;
-    }
-    return;
-  }
-
-  // Bare `takes propose` — list the pending queue (source-scoped).
-  const limitRaw = flagValue(args, '--limit');
-  const limit = limitRaw !== undefined ? parseInt(limitRaw, 10) : 20;
-  if (!Number.isFinite(limit) || limit <= 0) {
-    console.error(`Invalid --limit "${limitRaw}". Expected a positive integer.`);
-    process.exit(1);
-  }
-  const pending = await listPendingProposals(engine, { sourceId, limit });
-  if (json) {
-    console.log(JSON.stringify(pending, null, 2));
-    return;
-  }
-  if (pending.length === 0) {
-    console.log('No pending take proposals. The propose_takes cycle phase fills this queue.');
-    return;
-  }
-  console.log(`# Pending take proposals (${pending.length})\n`);
-  for (const p of pending) {
-    const w = Number(p.weight).toFixed(2);
-    const domain = p.domain ? ` • ${p.domain}` : '';
-    console.log(`#${p.id} ${p.page_slug} [${p.kind} • ${p.holder} • w=${w}${domain}]\n  ${p.claim_text}\n`);
-  }
-  console.log('Accept with `gbrain takes propose --accept <id>`; reject with `--reject <id>`.');
-}
-
 // --- Dispatcher ---
 
 export async function runTakes(engine: BrainEngine, args: string[]): Promise<void> {
@@ -1182,10 +1097,6 @@ Subcommands:
                        [--evidence "..."] [--value N --unit usd|pct|count] [--by <slug>]
                                           Record bet resolution (immutable, v0.30.0)
                                           Back-compat: --outcome true|false (deprecated alias)
-  takes propose [--limit N] [--json]      List pending LLM-proposed takes (propose_takes queue)
-  takes propose --accept <id> [--dir <path>]
-                                          Promote a proposal into the page's takes fence
-  takes propose --reject <id>             Dismiss a proposal
   takes scorecard [<holder>] [--domain <prefix>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--json]
                                           Aggregate calibration scorecard (v0.30.0)
   takes calibration [<holder>] [--bucket-size 0.1] [--json]
@@ -1202,6 +1113,9 @@ Common flags:
   const rest = args.slice(1);
 
   switch (sub) {
+    // #2079: `takes list` used to be parsed as page slug "list" and printed
+    // "No takes on list." — reading exactly like an empty takes table.
+    case 'list':        return cmdList(engine, rest);
     case 'search':      return cmdSearch(engine, rest);
     case 'embed':       return cmdEmbed(engine, rest);
     case 'proposals':   return cmdProposals(engine, rest);
@@ -1216,9 +1130,6 @@ Common flags:
     case 'update':      return cmdUpdate(engine, rest, await resolveTakesSourceId(engine));
     case 'supersede':   return cmdSupersede(engine, rest, await resolveTakesSourceId(engine));
     case 'resolve':     return cmdResolve(engine, rest, await resolveTakesSourceId(engine));
-    // #2411: `takes propose` used to fall through to the slug path and print
-    // "No takes on propose." — the LLM proposal queue had no drain surface.
-    case 'propose':     return cmdPropose(engine, rest, await resolveTakesSourceId(engine));
     case 'scorecard':   return cmdScorecard(engine, rest);
     case 'calibration': return cmdCalibration(engine, rest);
     case 'revisit':     return cmdRevisit(engine, rest);
@@ -1242,12 +1153,13 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
   const sub = rest[0];
   if (sub !== '--from-pages') {
     process.stderr.write(
-      'Usage: gbrain takes extract --from-pages [--yes] [--dry-run] [--source-id <id>] [--max-pages N (clamped to 1000)] [--include-covered] [--holder <name>]\n' +
+      'Usage: gbrain takes extract --from-pages [--yes] [--dry-run] [--json] [--source-id <id>] [--max-pages N (clamped to 1000)] [--include-covered] [--holder <name>]\n' +
       'Runs progress: pages that already hold takes are skipped, so repeat runs sweep a large corpus in slices. --include-covered rescans everything (refresh).\n',
     );
     process.exit(1);
   }
   const dryRun = rest.includes('--dry-run');
+  const json = rest.includes('--json');
   const skipConfirm = rest.includes('--yes');
   const sourceIdx = rest.indexOf('--source-id');
   const sourceIdFilter = sourceIdx >= 0 ? rest[sourceIdx + 1] : undefined;
