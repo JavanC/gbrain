@@ -460,6 +460,22 @@ export async function runCapture(engine: BrainEngine | null, args: string[], opt
     }
     const persistence = result.persistence as { file_written?: boolean } | undefined;
     const writeThrough = result.write_through as { written?: boolean; path?: string } | undefined;
+    // Fork: a source-scoped write policy rejects a non-conforming page by
+    // RETURNING an error shape rather than throwing, so the caller can
+    // inspect machine-readable violations. Falling through to printReceipt()
+    // as if it were the success shape reported "written: false" /
+    // "status: unknown" with the actual reason silently dropped.
+    if (typeof result.error === 'string') {
+      const violations = (result.violations ?? []) as Array<{ field?: string; message: string; fix?: string }>;
+      console.error(`gbrain capture: ${result.error} — ${result.message ?? 'the page was not written.'}`);
+      for (const v of violations) {
+        console.error(`  ${v.field ? `[${v.field}] ` : ''}${v.message}${v.fix ? ` — fix: ${v.fix}` : ''}`);
+      }
+      if (typeof result.hint === 'string') console.error(result.hint);
+      if (parsed.json) console.log(JSON.stringify(result, null, 2));
+      process.exit(1);
+    }
+
     printReceipt({
       slug: result.slug as string,
       status: result.status as string | undefined,
