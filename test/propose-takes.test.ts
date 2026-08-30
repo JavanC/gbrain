@@ -650,7 +650,10 @@ New prose appended here.`;
     const runIdB = inserts[1]!.params[4];
     expect(runIdA).toBe(runIdB);
     expect(typeof runIdA).toBe('string');
-    expect((runIdA as string).startsWith('propose-')).toBe(true);
+    // The unique hex segment leads (so extract-receipt slug truncation gets
+    // real entropy instead of colliding on a literal "propose-" prefix);
+    // "propose" stays in the id as a readable middle segment.
+    expect((runIdA as string)).toMatch(/^[0-9a-f]{8}-propose-\d{14}$/);
   });
 
   test('records the configured gateway chat model when no phase model override is passed', async () => {
