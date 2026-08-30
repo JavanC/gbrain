@@ -397,7 +397,25 @@ export async function runCapture(engine: BrainEngine | null, args: string[]): Pr
       status?: string;
       chunks?: number;
       write_through?: { written: boolean; path?: string };
+      // See the local-install path below: a source-scoped write policy
+      // rejects a non-conforming page by returning this shape (domain-level
+      // failure inside a successful tool call), not by throwing/isError.
+      error?: string;
+      message?: string;
+      violations?: Array<{ field?: string; message: string; fix?: string }>;
+      hint?: string;
     }>(raw);
+    if (remoteResult.error) {
+      console.error(`gbrain capture: ${remoteResult.error} — ${remoteResult.message ?? 'the page was not written.'}`);
+      for (const v of remoteResult.violations ?? []) {
+        console.error(`  ${v.field ? `[${v.field}] ` : ''}${v.message}${v.fix ? ` — fix: ${v.fix}` : ''}`);
+      }
+      if (remoteResult.hint) console.error(remoteResult.hint);
+      if (parsed.json) {
+        console.log(JSON.stringify(remoteResult, null, 2));
+      }
+      process.exit(1);
+    }
     const result: CaptureResult = {
       slug: remoteResult.slug,
       status: remoteResult.status,
@@ -463,7 +481,28 @@ export async function runCapture(engine: BrainEngine | null, args: string[]): Pr
       status?: string;
       chunks?: number;
       write_through?: { written: boolean; path?: string; skipped?: string };
+      // A source-scoped write policy (get_write_contract) rejects a
+      // non-conforming page by RETURNING this shape rather than throwing —
+      // so the caller can inspect machine-readable violations. Falling
+      // through to printReceipt() as if it were the success shape reported
+      // "written: false" / "status: unknown" with the actual reason
+      // silently dropped.
+      error?: string;
+      message?: string;
+      violations?: Array<{ field?: string; message: string; fix?: string }>;
+      hint?: string;
     };
+    if (result.error) {
+      console.error(`gbrain capture: ${result.error} — ${result.message ?? 'the page was not written.'}`);
+      for (const v of result.violations ?? []) {
+        console.error(`  ${v.field ? `[${v.field}] ` : ''}${v.message}${v.fix ? ` — fix: ${v.fix}` : ''}`);
+      }
+      if (result.hint) console.error(result.hint);
+      if (parsed.json) {
+        console.log(JSON.stringify(result, null, 2));
+      }
+      process.exit(1);
+    }
     printReceipt(
       {
         slug: result.slug,
