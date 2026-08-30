@@ -735,7 +735,16 @@ class ProposeTakesPhase extends BaseCyclePhase {
         fallback: getChatModel(),
       })
       : getChatModel();
-    const proposalRunId = `propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${randomUUID().slice(0, 8)}`;
+    // The unique hex segment leads: extract-receipt slugs truncate run_id to
+    // its first 8 chars (shortRunId, receipt-writer.ts) to build the
+    // extracts/{date}/{kind}/{source_id}/{run_id_short}/round-{N} path. A
+    // literal "propose-" prefix here would eat that whole budget, so every
+    // propose_takes receipt collapsed to the same non-disambiguating
+    // "propose" folder regardless of which run wrote it (#3443 trimmed the
+    // boundary hyphen this produced but didn't fix the root cause). Leading
+    // with randomUUID gives shortRunId real per-run entropy; "propose" stays
+    // in the id for human readability in `gbrain takes proposals`.
+    const proposalRunId = `${randomUUID().slice(0, 8)}-propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}`;
 
     // The probe, the skip report, and the recorded model_id must all name the
     // model this phase ACTUALLY runs — which is resolvedModel, since
