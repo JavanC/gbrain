@@ -2,6 +2,30 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.47.4.2] - 2026-08-30
+
+Two small fixes found during the v0.47.4.1 upgrade's post-deploy smoke test.
+
+- **`propose_takes` extract-receipt slugs no longer collide.** The run id
+  handed to the receipt writer was `propose-<timestamp>-<hex8>`, and the
+  receipt slug truncates run_id to its first 8 chars — the literal string
+  "propose" for every single run, regardless of which run wrote it. Now
+  leads with the unique hex so every receipt gets a real per-run slug.
+  Backfilled the 37 legacy receipts already carrying the collided slug
+  (DB-only rows under `extracts/`, no files/git history involved).
+- **`gbrain capture` surfaces a rejected write-policy gate.** A
+  source-scoped write policy rejecting a page returns `{error, violations,
+  hint}` rather than throwing; `capture.ts` predated that shape and fell
+  through to a bare "written: false" / "status: unknown" with the actual
+  reason silently dropped. Both the local-install and thin-client paths now
+  print the violation, field, fix, and hint before exiting 1.
+
+### To take advantage of v0.47.4.2
+```bash
+gbrain upgrade
+```
+No schema migration. No manual steps.
+
 ## [0.47.4.1] - 2026-08-29
 
 Fork rebase onto upstream v0.47.4.0 (from v0.46.15.0), 38 commits. Javan's
