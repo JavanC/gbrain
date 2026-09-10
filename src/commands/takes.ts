@@ -18,8 +18,8 @@
  */
 
 import { resolve as resolvePath } from 'node:path';
-import { existsSync } from 'node:fs';
-import type { BrainEngine } from '../core/engine.ts';
+import { existsSync, readFileSync } from 'node:fs';
+import type { BrainEngine, TakeKind } from '../core/engine.ts';
 import type { OperationError } from '../core/ops/contract.ts';
 import { usageError } from '../cli/cli-error.ts';
 import {
@@ -467,6 +467,190 @@ async function cmdCalibration(engine: BrainEngine, args: string[]): Promise<void
 }
 
 /**
+ * Fork addition: `--apply-review <file.json>` applies a whole reviewed batch in
+ * one pass.
+ *
+ * Deliberately a THIN layer over upstream's `acceptProposal` / `rejectProposal`
+ * rather than a parallel promotion path. Those are the D17 queue→canonical
+ * route: they take the page lock, edit the markdown fence, write the .md, then
+ * mirror to the DB, and they REFUSE a page with no locatable file (#4473).
+ * Re-implementing any of that here would mean a second, weaker writer.
+ *
+ * What this adds is batching, which is what a human reviewer actually needs
+ * when the nightly propose_takes phase has queued hundreds of proposals: dump
+ * the queue to JSON, mark each row accept / reject / pending, apply once.
+ * A per-row failure is RECORDED, never fatal — one unwritable page must not
+ * abandon the other 99 decisions half-applied.
+ *
+ * Review file shape: [{ "id": 123, "decision": "accept" | "reject" | "pending",
+ * "recommendation": "optional free text" }, ...]
+ */
+type ReviewDecision = 'accept' | 'reject' | 'pending';
+
+interface TakeProposalReviewDecision {
+  id: number;
+  recommendation?: string;
+  decision: ReviewDecision;
+}
+
+function parseReviewDecision(raw: unknown): ReviewDecision {
+  if (raw === 'accept' || raw === 'reject' || raw === 'pending') return raw;
+  console.error(`Invalid review decision "${String(raw)}". Expected accept, reject, or pending.`);
+  process.exit(1);
+}
+
+function loadReviewDecisions(path: string): TakeProposalReviewDecision[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (err) {
+    console.error(`Failed to read review JSON ${path}: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+  if (!Array.isArray(parsed)) {
+    console.error('Review JSON must be an array of { id, decision } objects.');
+    process.exit(1);
+  }
+  const seen = new Set<number>();
+  const decisions: TakeProposalReviewDecision[] = [];
+  for (const item of parsed) {
+    if (!item || typeof item !== 'object') {
+      console.error('Review JSON entries must be objects.');
+      process.exit(1);
+    }
+    const row = item as Record<string, unknown>;
+    const id = typeof row.id === 'number' ? row.id : parseInt(String(row.id), 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      console.error(`Invalid review proposal id "${String(row.id)}".`);
+      process.exit(1);
+    }
+    if (seen.has(id)) {
+      console.error(`Duplicate review proposal id "${id}".`);
+      process.exit(1);
+    }
+    seen.add(id);
+    decisions.push({
+      id,
+      ...(typeof row.recommendation === 'string' ? { recommendation: row.recommendation } : {}),
+      decision: parseReviewDecision(row.decision),
+    });
+  }
+  return decisions;
+}
+
+interface ApplyReviewOutcome {
+  id: number;
+  page_slug?: string;
+  row_num?: number;
+  error?: string;
+}
+
+async function cmdProposeApplyReview(
+  engine: BrainEngine,
+  args: string[],
+  sourceId: string,
+  actedBy: string,
+): Promise<void> {
+  const json = flagPresent(args, '--json');
+  const dryRun = flagPresent(args, '--dry-run');
+  const decisions = loadReviewDecisions(flagValue(args, '--apply-review')!);
+  const wanted = (d: ReviewDecision) => decisions.filter((x) => x.decision === d).map((x) => x.id);
+  const acceptIds = wanted('accept');
+  const rejectIds = wanted('reject');
+  const pendingIds = wanted('pending');
+
+  if (dryRun) {
+    // Index the live pending queue so the preview shows the claim text the
+    // reviewer is actually deciding on, and flags ids that are no longer
+    // pending BEFORE anything is written.
+    const pending = await listPendingProposals(engine, { sourceId, limit: 1000 });
+    const byId = new Map(pending.map((p) => [p.id, p]));
+    const describe = (ids: number[]) => ids.map((id) => {
+      const row = byId.get(id);
+      return row
+        ? { id, page_slug: row.page_slug, claim: row.claim_text }
+        : { id, error: 'not in the pending queue' };
+    });
+    const result = {
+      dry_run: true,
+      source_id: sourceId,
+      accept: describe(acceptIds),
+      reject: describe(rejectIds),
+      left_pending: pendingIds,
+    };
+    if (json) { console.log(JSON.stringify(result, null, 2)); return; }
+    console.log(`# Take proposal review preview (source ${sourceId})
+`);
+    for (const [label, rows] of [['Accept', result.accept], ['Reject', result.reject]] as const) {
+      console.log(`${label}: ${rows.length}`);
+      for (const r of rows) {
+        console.log('error' in r && r.error
+          ? `  #${r.id} — ${r.error}`
+          : `  #${r.id} ${(r as { page_slug: string }).page_slug}
+    ${(r as { claim: string }).claim}`);
+      }
+    }
+    if (pendingIds.length > 0) console.log(`Left pending: ${pendingIds.join(', ')}`);
+    return;
+  }
+
+  const dirArg = flagValue(args, '--dir');
+  const brainDir = acceptIds.length > 0
+    ? await resolveBrainDir(engine, dirArg ?? null)
+    : '';
+  // Same accept target upstream's single --accept builds (config threads into
+  // the coordinated takes_add; an explicit --dir is validated as the source root).
+  const acceptTarget = { engine, brainDir, sourceId, actedBy, config: loadConfig() ?? { engine: 'pglite' as const },
+    ...(dirArg ? { localDir: resolvePath(dirArg) } : {}) };
+  // Recorded, not fatal: a batch of 100 must not be abandoned half-applied
+  // because one row's write is refused. Anything else (infrastructure) aborts.
+  const isRowFailure = (err: unknown): err is Error =>
+    err instanceof TakeProposalError || err instanceof TakesWriteError
+    || (err instanceof Error && err.name === 'OperationError');
+  const accepted: ApplyReviewOutcome[] = [];
+  const rejected: ApplyReviewOutcome[] = [];
+
+  for (const id of acceptIds) {
+    try {
+      const { proposal, rowNum } = await acceptProposal(acceptTarget, id);
+      accepted.push({ id, page_slug: proposal.page_slug, row_num: rowNum });
+    } catch (err) {
+      if (!isRowFailure(err)) throw err;
+      accepted.push({ id, error: err.message });
+    }
+  }
+  for (const id of rejectIds) {
+    try {
+      const proposal = await rejectProposal({ engine, sourceId, actedBy }, id);
+      rejected.push({ id, page_slug: proposal.page_slug });
+    } catch (err) {
+      if (!isRowFailure(err)) throw err;
+      rejected.push({ id, error: err.message });
+    }
+  }
+
+  const failures = [...accepted, ...rejected].filter((r) => r.error);
+  const result = {
+    dry_run: false,
+    source_id: sourceId,
+    accepted,
+    rejected,
+    left_pending: pendingIds,
+    failures: failures.length,
+  };
+  if (json) { console.log(JSON.stringify(result, null, 2)); }
+  else {
+    console.log('# Applied take proposal review\n');
+    console.log(`Accepted: ${accepted.filter((r) => !r.error).length}/${acceptIds.length}`);
+    console.log(`Rejected: ${rejected.filter((r) => !r.error).length}/${rejectIds.length}`);
+    if (pendingIds.length > 0) console.log(`Left pending: ${pendingIds.length}`);
+    for (const f of failures) console.error(`  #${f.id}: ${f.error}`);
+  }
+  // A partially-applied batch must not look like a clean run to a script.
+  if (failures.length > 0) process.exit(1);
+}
+
+/**
  * #2411 / #4102 — `gbrain takes propose` drains the take_proposals queue the
  * propose_takes cycle phase fills. Bare invocation lists pending proposals;
  * --accept promotes one into the page's takes fence via the shared
@@ -521,6 +705,17 @@ async function cmdPropose(engine: BrainEngine, args: string[], sourceId: string)
     console.error(`Error: ${editFlags.join(', ')} edit a proposal only together with --accept <id>.`);
     process.exit(1);
   }
+  // Fork: batch review. Checked before the single-id paths so the mutual
+  // exclusion is stated once, and it reuses the same actedBy attribution.
+  if (flagValue(args, '--apply-review') !== undefined) {
+    if (acceptRaw !== undefined || rejectRaw !== undefined) {
+      console.error('Error: --apply-review applies a whole reviewed batch; it cannot be combined with --accept/--reject.');
+      process.exit(1);
+    }
+    await cmdProposeApplyReview(engine, args, sourceId, actedBy);
+    return;
+  }
+
   if (acceptRaw !== undefined) {
     const id = parseId(acceptRaw, '--accept');
     const dirArg = flagValue(args, '--dir');
@@ -628,6 +823,10 @@ Subcommands:
                                           Pages propose_takes held after repeated extractor failures
   takes propose --retry-failed [--slug <slug>] [--source <id>] [--json]
                                           Release held pages so the next propose_takes run re-extracts them
+  takes propose --apply-review <f.json> [--dry-run] [--dir <path>] [--json]
+                                          Apply a whole reviewed batch: [{id, decision:
+                                          accept|reject|pending}]. Per-row failures are
+                                          reported, not fatal; exit 1 if any failed.
   takes scorecard [<holder>] [--domain <prefix>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--json]
                                           Aggregate calibration scorecard (v0.30.0)
                   [--group-by holder|source] [--min-n N] [--source-id <id>]

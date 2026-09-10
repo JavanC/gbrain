@@ -1,0 +1,5 @@
+# Source this before ANY cli run from this worktree.
+# The worktree shares ~/.gbrain/config.json, which points at the PRODUCTION
+# database — running `bun src/cli.ts` here migrates production. Always isolate.
+export GBRAIN_HOME=/tmp/gbrain-rebase-home
+unset DATABASE_URL
