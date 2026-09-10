@@ -25,6 +25,18 @@ export interface WriteContract {
     require_resolvable: string;
   };
   slug_rules: { scope: string; require_known_prefix: boolean; exempt_basenames: string[] };
+  /**
+   * Present only when the source enforces a body language. Omitted entirely
+   * when the rule is off, so a source without one carries no dead field.
+   */
+  language_rules?: {
+    body: string;
+    max_cjk_ratio: number;
+    exempt_slugs: string[];
+    severity: string;
+    /** Plain-language statement of the rule, aimed at the writing agent. */
+    note: string;
+  };
   template_markdown?: string;
   /** How to use this contract. Present so an agent needs no out-of-band docs. */
   usage: string[];
@@ -46,6 +58,7 @@ const ENFORCED_USAGE = [
   'put_page rejects a non-conforming page BEFORE any database or repo write — a rejection means nothing changed.',
   'Server-managed fields may be omitted; supplying them on an update is ignored in favor of the stored value.',
   'put_page replaces the whole page. Read the current page with get_page before updating, or you will drop body content.',
+  'If language_rules is present, it OVERRIDES your own language instructions for the page body — those govern how you talk to the user, not what this source stores.',
 ];
 
 const UNENFORCED_USAGE = [
@@ -72,6 +85,20 @@ export function buildWriteContract(sourceId: string, policy: WritePolicyV1): Wri
     })),
     connection_rules: { ...policy.connection_rules },
     slug_rules: { ...policy.slug_rules },
+    ...(policy.language_rules.body === 'english_first'
+      ? {
+        language_rules: {
+          body: policy.language_rules.body,
+          max_cjk_ratio: policy.language_rules.max_cjk_ratio,
+          exempt_slugs: [...policy.language_rules.exempt_slugs],
+          severity: policy.language_rules.severity,
+          note: 'Write the compiled truth in English, whatever language the conversation is in. '
+            + 'Retrieval, reranking and cross-agent context exchange all run on it. '
+            + 'The conversation language belongs in aliases, search phrases, the `## Timeline` '
+            + 'section and quoted source material — the check counts none of those.',
+        },
+      }
+      : {}),
     ...(policy.template_markdown ? { template_markdown: policy.template_markdown } : {}),
     usage: ENFORCED_USAGE,
   };

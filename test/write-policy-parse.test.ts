@@ -167,3 +167,39 @@ describe('resolveWritePolicyFromYaml', () => {
     expect(res.error).toMatch(/version/);
   });
 });
+
+describe('language_rules', () => {
+  test('absent → off, so every existing source is unaffected', () => {
+    const p = parseWritePolicy({ contract_version: '1' }, 'test')!;
+    expect(p.language_rules.body).toBe('off');
+  });
+
+  test('defaults max_cjk_ratio to the chunker threshold rather than a second number', async () => {
+    const { CJK_DENSITY_THRESHOLD } = await import('../src/core/cjk.ts');
+    const p = parseWritePolicy({ language_rules: { body: 'english_first' } }, 'test')!;
+    expect(p.language_rules.max_cjk_ratio).toBe(CJK_DENSITY_THRESHOLD);
+    expect(p.language_rules.severity).toBe('error');
+  });
+
+  test('an explicit ratio and exemptions are kept, exemptions lower-cased', () => {
+    const p = parseWritePolicy({
+      language_rules: { body: 'english_first', max_cjk_ratio: 0.2, exempt_slugs: ['*/README'], severity: 'warn' },
+    }, 'test')!;
+    expect(p.language_rules.max_cjk_ratio).toBe(0.2);
+    expect(p.language_rules.exempt_slugs).toEqual(['*/readme']);
+    expect(p.language_rules.severity).toBe('warn');
+  });
+
+  test('fails LOUD on a bad body value rather than silently disabling itself', () => {
+    expect(() => parseWritePolicy({ language_rules: { body: 'chinese' } }, 'test')).toThrow(/body must be/);
+  });
+
+  test('fails LOUD on an out-of-range ratio', () => {
+    expect(() => parseWritePolicy({ language_rules: { body: 'english_first', max_cjk_ratio: 0 } }, 'test')).toThrow(/max_cjk_ratio/);
+    expect(() => parseWritePolicy({ language_rules: { body: 'english_first', max_cjk_ratio: 1.5 } }, 'test')).toThrow(/max_cjk_ratio/);
+  });
+
+  test('fails LOUD on a bad severity', () => {
+    expect(() => parseWritePolicy({ language_rules: { body: 'english_first', severity: 'fatal' } }, 'test')).toThrow(/severity must be/);
+  });
+});

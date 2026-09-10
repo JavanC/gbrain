@@ -19,6 +19,8 @@
 // version-controlled policy document.
 
 /** Where a server-managed field's value comes from and when it may change. */
+import { CJK_DENSITY_THRESHOLD } from '../cjk.ts';
+
 export type ServerManagedMode =
   /** Server fills it on CREATE; on UPDATE the stored value wins. */
   | 'set_on_create_preserve_on_update'
@@ -86,6 +88,33 @@ export interface SlugRules {
   exempt_basenames: string[];
 }
 
+/**
+ * Body-language rule. Exists because a documented convention that no layer
+ * enforces is not a convention: javan-brain's SCHEMA.md has required
+ * English-first compiled truth since the repo was created, and a single agent
+ * session wrote six Chinese pages through a fully-compliant put_page because
+ * nothing in the contract it fetched said otherwise.
+ *
+ * Scope is deliberately narrow. The rule governs the COMPILED TRUTH only —
+ * aliases, search phrases, the timeline and source quotes are where the
+ * convention expects the other language to live, so the check strips the
+ * timeline and the takes/facts fences before measuring.
+ */
+export interface LanguageRules {
+  /** 'off' disables the check (the default, so other sources are unaffected). */
+  body: 'off' | 'english_first';
+  /**
+   * CJK chars / non-whitespace chars at or above which the body is refused.
+   * Defaults to the chunker's own CJK_DENSITY_THRESHOLD so the gate and the
+   * chunker agree on what "CJK-heavy" means.
+   */
+  max_cjk_ratio: number;
+  /** Slug globs the rule ignores — directory signage, human-facing indexes. */
+  exempt_slugs: string[];
+  /** 'error' refuses the write; 'warn' reports and lets it through. */
+  severity: 'error' | 'warn';
+}
+
 export interface WritePolicyV1 {
   version: 1;
   enabled: boolean;
@@ -99,6 +128,7 @@ export interface WritePolicyV1 {
   type_path_rules: TypePathRule[];
   connection_rules: ConnectionRules;
   slug_rules: SlugRules;
+  language_rules: LanguageRules;
   /** Copy-pasteable skeleton returned by `get_write_contract`. */
   template_markdown?: string;
 }
@@ -244,6 +274,31 @@ export function parseWritePolicy(raw: unknown, path: string): WritePolicyV1 | nu
       .map((s) => s.toLowerCase()),
   };
 
+  const langRaw = asRecord(doc.language_rules) ?? {};
+  const langBody = (langRaw.body ?? 'off') as LanguageRules['body'];
+  if (langBody !== 'off' && langBody !== 'english_first') {
+    throw new WritePolicyParseError('write_policy.language_rules.body must be off | english_first', path);
+  }
+  const langSeverity = (langRaw.severity ?? 'error') as LanguageRules['severity'];
+  if (langSeverity !== 'error' && langSeverity !== 'warn') {
+    throw new WritePolicyParseError('write_policy.language_rules.severity must be error | warn', path);
+  }
+  let maxCjk = CJK_DENSITY_THRESHOLD;
+  if (langRaw.max_cjk_ratio !== undefined) {
+    const n = Number(langRaw.max_cjk_ratio);
+    if (!Number.isFinite(n) || n <= 0 || n > 1) {
+      throw new WritePolicyParseError('write_policy.language_rules.max_cjk_ratio must be a number in (0, 1]', path);
+    }
+    maxCjk = n;
+  }
+  const language_rules: LanguageRules = {
+    body: langBody,
+    max_cjk_ratio: maxCjk,
+    exempt_slugs: asStringArray(langRaw.exempt_slugs, 'language_rules.exempt_slugs', path)
+      .map((s) => s.toLowerCase()),
+    severity: langSeverity,
+  };
+
   const template = doc.template_markdown;
   if (template !== undefined && typeof template !== 'string') {
     throw new WritePolicyParseError('write_policy.template_markdown must be a string', path);
@@ -266,6 +321,7 @@ export function parseWritePolicy(raw: unknown, path: string): WritePolicyV1 | nu
     type_path_rules,
     connection_rules: { id_style, slug_pattern, require_resolvable },
     slug_rules,
+    language_rules,
     ...(typeof template === 'string' ? { template_markdown: template } : {}),
   };
 }

@@ -90,11 +90,22 @@ export function countCJKAwareWords(s: string): number {
  * chunker's overlap extractor) route through this so the two cannot drift.
  */
 export function isCJKDominant(s: string): boolean {
+  return cjkRatio(s) >= CJK_DENSITY_THRESHOLD;
+}
+
+/**
+ * CJK chars as a fraction of non-whitespace chars, 0 when there is no text.
+ *
+ * Extracted so `isCJKDominant` and the write-policy language rule share ONE
+ * implementation: a second copy would let the chunker's notion of "CJK-heavy"
+ * drift away from the gate's, and the gate would then reject pages the
+ * chunker treats as Latin (or the reverse).
+ */
+export function cjkRatio(s: string): number {
   const nonWhitespace = s.replace(/\s/g, '').length;
-  if (nonWhitespace === 0) return false;
+  if (nonWhitespace === 0) return 0;
   const cjkMatches = s.match(new RegExp(`[${CJK_SLUG_CHARS}]`, 'g'));
-  const cjkCount = cjkMatches ? cjkMatches.length : 0;
-  return cjkCount / nonWhitespace >= CJK_DENSITY_THRESHOLD;
+  return (cjkMatches ? cjkMatches.length : 0) / nonWhitespace;
 }
 
 /**

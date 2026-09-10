@@ -340,3 +340,90 @@ describe('normalization output', () => {
     expect(res.normalized).toBe(false);
   });
 });
+
+/**
+ * Body language rule (English-first compiled truth).
+ *
+ * The rule exists because a documented convention nothing enforces is not a
+ * convention: javan-brain's SCHEMA.md has demanded English-first compiled
+ * truth since the repo was created, and one agent session still wrote six
+ * Chinese pages through a fully contract-compliant put_page, because the
+ * contract it fetched said nothing about language.
+ *
+ * The load-bearing case is the LAST one: the same convention deliberately
+ * keeps the other language in aliases, search phrases and the timeline, so a
+ * whole-body count would refuse pages the convention calls conforming.
+ */
+describe('body language: english_first', () => {
+  const LANG = parseWritePolicy({
+    contract_version: '1',
+    required_fields: ['title', 'type'],
+    type_path_rules: [{ prefix: 'concepts/', types: 'any' }, { prefix: 'inbox/', types: 'any' }],
+    language_rules: { body: 'english_first', exempt_slugs: ['*/readme'] },
+  }, 'test')!;
+
+  const runLang = (content: string, slug = 'concepts/x') => validatePageAgainstPolicy({
+    policy: LANG, slug, content, existingFrontmatter: null, now: ACROSS_MIDNIGHT_TPE,
+  });
+
+  const front = 'title: X\ntype: concept';
+
+  test('an English body passes', async () => {
+    const res = await runLang(page(front, 'Goals stay stable while mechanisms are replaceable.'));
+    expect(codes(res.violations)).not.toContain('body_language_not_english_first');
+    expect(res.valid).toBe(true);
+  });
+
+  test('a Chinese body is refused, and the message names the measured ratio', async () => {
+    const res = await runLang(page(front, '目標應該保持穩定，實作機制則是可替換的。這是核心原則。'));
+    expect(codes(res.violations)).toContain('body_language_not_english_first');
+    expect(res.valid).toBe(false);
+    const v = res.violations.find((x) => x.code === 'body_language_not_english_first')!;
+    expect(v.message).toMatch(/\d+% CJK/);
+  });
+
+  test('an English body quoting a Chinese term stays under the limit', async () => {
+    const res = await runLang(page(front,
+      'The rule is called 目標樹 in conversation, but the compiled truth is written in English '
+      + 'so retrieval, reranking and cross-agent exchange all operate on one language.'));
+    expect(res.valid).toBe(true);
+  });
+
+  test('exempt slugs are ignored — directory signage is not promoted knowledge', async () => {
+    const res = await runLang(page(front, '可複用的心智模型、技術、洞察、pattern、原則。'), 'concepts/readme');
+    expect(codes(res.violations)).not.toContain('body_language_not_english_first');
+  });
+
+  test('severity: warn reports without refusing the write', async () => {
+    const warnPolicy = parseWritePolicy({
+      contract_version: '1',
+      required_fields: ['title', 'type'],
+      type_path_rules: [{ prefix: 'concepts/', types: 'any' }],
+      language_rules: { body: 'english_first', severity: 'warn' },
+    }, 'test')!;
+    const res = await validatePageAgainstPolicy({
+      policy: warnPolicy, slug: 'concepts/x', content: page(front, '這一整段都是中文內容。'),
+      existingFrontmatter: null, now: ACROSS_MIDNIGHT_TPE,
+    });
+    expect(codes(res.violations)).toContain('body_language_not_english_first');
+    expect(res.valid).toBe(true);
+  });
+
+  test('a Chinese TIMELINE under an English body is conforming', async () => {
+    // The convention puts the other language here on purpose. A naive
+    // whole-body count would make this page unwritable.
+    const res = await runLang(page(front,
+      'Goals stay stable while mechanisms are replaceable.\n\n'
+      + '## Timeline\n'
+      + '- **2026-08-12** | 某個 agent session 一次寫進六頁中文，因為契約沒說不行。\n'
+      + '- **2026-09-10** | 補上語言規則，讓契約說得出來、gate 擋得住。\n'));
+    expect(codes(res.violations)).not.toContain('body_language_not_english_first');
+    expect(res.valid).toBe(true);
+  });
+
+  test('the rule is off unless the source asks for it', async () => {
+    const res = await run(page('title: A Concept\ntype: concept\ntags:\n  - topic',
+      '這一整段都是中文，但這個 source 沒有宣告語言規則。'));
+    expect(codes(res.violations)).not.toContain('body_language_not_english_first');
+  });
+});
