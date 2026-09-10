@@ -187,6 +187,19 @@ export function wordCountOf(st: WordStats): number {
 }
 
 /**
+ * Fork: CJK chars as a fraction of non-whitespace chars, 0 when there is no text.
+ *
+ * Shares `wordStats` with `isCJKDominant` so the write-policy language rule
+ * and the chunker have ONE notion of "CJK-heavy": a second copy would let them
+ * drift, and the gate would then reject pages the chunker treats as Latin (or
+ * the reverse).
+ */
+export function cjkRatio(s: string): number {
+  const st = wordStats(s);
+  return st.nonWhitespace === 0 ? 0 : st.cjk / st.nonWhitespace;
+}
+
+/**
  * LIKE-pattern escape for PGLite/Postgres `ILIKE ... ESCAPE '\'`.
  * Must escape backslash FIRST so the introduced backslashes aren't double-escaped.
  */
