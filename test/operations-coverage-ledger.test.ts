@@ -140,6 +140,10 @@ const LEDGER: Record<string, string> = {
   code_traversal_cache_clear: 'test/operations-trust-boundary.test.ts',
   migrate_embeddings: 'test/migrate-embeddings-op-contract.serial.test.ts',
   get_active_schema_pack: 'test/operations-schema-pack.test.ts',
+  // Fork (source write policy): write-policy-ops.test.ts walks both ops'
+  // grant refusal, no-policy passthrough, and the shared-validator contract.
+  get_write_contract: 'test/write-policy-ops.test.ts',
+  validate_page: 'test/write-policy-ops.test.ts',
   list_schema_packs: 'test/operations-schema-pack.test.ts',
   schema_stats: 'test/operations-schema-pack.test.ts',
   schema_lint: 'test/operations-schema-pack.test.ts',

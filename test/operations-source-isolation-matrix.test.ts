@@ -124,6 +124,13 @@ const MATRIX: Row[] = [
   { name: 'request_tools', mode: 'brainwide', args: { tools: ['get_page'] }, rationale: 'tool registry surface, no page data' },
   { name: 'list_link_sources', mode: 'brainwide', args: {}, rationale: 'distinct link-origin kinds; enumerates kinds not content' },
   { name: 'get_active_schema_pack', mode: 'brainwide', args: {}, rationale: 'brain-level schema config' },
+  // Fork (source write policy). Neither returns stored page data: one
+  // discloses a source's page CONTRACT, the other validates caller-supplied
+  // markdown against it. get_write_contract's own out-of-grant refusal
+  // (source_not_permitted, via resolveContractSourceId) is pinned by
+  // test/write-policy-ops.test.ts, which owns that boundary.
+  { name: 'get_write_contract', mode: 'brainwide', args: {}, rationale: 'discloses the caller\'s own source write contract; refuses out-of-grant source_id, returns no page data' },
+  { name: 'validate_page', mode: 'brainwide', args: { slug: 'notes/beta-note', content: '---\ntype: note\ntitle: Probe\n---\n\nProbe.' }, rationale: 'validates caller-supplied content against the caller\'s own policy; reads no stored page data' },
   { name: 'list_schema_packs', mode: 'brainwide', args: {}, rationale: 'brain-level schema config' },
   { name: 'schema_graph', mode: 'brainwide', args: {}, rationale: 'schema-pack type graph, not page data' },
   { name: 'schema_explain_type', mode: 'brainwide', args: { type: 'note' }, rationale: 'schema-pack type doc, not page data' },

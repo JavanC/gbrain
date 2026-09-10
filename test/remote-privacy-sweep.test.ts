@@ -148,6 +148,10 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   get_page: { slug: WORLD_FENCE_SLUG, include_content: true },
   fetch: { id: WORLD_FENCE_SLUG },
   list_pages: {},
+  // Fork: validate_page requires slug + content. The content is written HERE
+  // rather than read from the corpus — that is the point of the op, and it is
+  // why the sweep can classify it 'ok' instead of 'data'.
+  validate_page: { slug: 'notes/sweep-validate-probe', content: '---\ntype: note\ntitle: Sweep Probe\n---\n\nProbe body.' },
   search: { query: 'WORLDSWEEP' },
   query: { query: 'WORLDSWEEP' },
   recall: { entity: WORLD_PAGE_SLUG },
@@ -264,6 +268,13 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   // in test/ops-loops.test.ts). Succeeds without corpus-marker requirement.
   open_loops: 'ok',
   get_active_schema_pack: 'ok',
+  // Fork (source write policy). Neither can return corpus data, so neither
+  // needs a PARAM_FACTORY entry: get_write_contract returns a source's page
+  // CONTRACT (field rules, directory->type map, template) and refuses an
+  // out-of-grant source_id; validate_page echoes a verdict on markdown the
+  // CALLER supplied. Both are 'ok', not 'data'.
+  get_write_contract: 'ok',
+  validate_page: 'ok',
   list_schema_packs: 'ok',
   schema_stats: 'ok',
   schema_graph: 'ok',
