@@ -5,8 +5,16 @@ import { MinionQueue } from '../src/core/minions/queue.ts';
 import { MinionWorker } from '../src/core/minions/worker.ts';
 import { registerBuiltinHandlers } from '../src/commands/jobs.ts';
 import { resetGateway } from '../src/core/ai/gateway.ts';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 let engine: PGLiteEngine;
+// put_page throws storage_error for any un-written page, and since v0.48.x a
+// source whose local_path does not exist resolves to `repo_not_found` rather
+// than the by-design DB-only `no_repo_configured`. So the source needs a REAL
+// directory on disk — same fix the Postgres sibling e2e already carries.
+let alphaLocalPath: string;
 const putPage = operations.find((op) => op.name === 'put_page')!;
 
 function remoteCtx(): OperationContext {
@@ -21,6 +29,7 @@ function remoteCtx(): OperationContext {
 }
 
 beforeAll(async () => {
+  alphaLocalPath = mkdtempSync(join(tmpdir(), 'gbrain-post-write-enrichment-'));
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -35,8 +44,9 @@ beforeEach(async () => {
   await engine.setConfig('writer.async_enrichment', 'true');
   await engine.executeRaw(
     `INSERT INTO sources (id, name, local_path)
-     VALUES ('alpha', 'alpha', '/tmp/alpha')
-     ON CONFLICT (id) DO NOTHING`,
+     VALUES ('alpha', 'alpha', $1)
+     ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path`,
+    [alphaLocalPath],
   );
   await engine.putPage('concepts/async-enrich-target', {
     type: 'concept',
@@ -73,8 +83,11 @@ describe('remote put_page asynchronous enrichment', () => {
       async_enrichment: { queued: boolean; job_id: number };
     };
 
-    expect(result.auto_links).toEqual({ skipped: 'remote' });
-    expect(result.auto_timeline).toEqual({ skipped: 'remote' });
+    // toMatchObject, not toEqual: upstream ships an explanatory `hint`
+    // alongside `skipped` and may add more. What this test asserts is that a
+    // remote write does NOT reconcile inline — not the payload's exact shape.
+    expect(result.auto_links).toMatchObject({ skipped: 'remote' });
+    expect(result.auto_timeline).toMatchObject({ skipped: 'remote' });
     expect(result.async_enrichment.queued).toBe(true);
 
     const queue = new MinionQueue(engine);
