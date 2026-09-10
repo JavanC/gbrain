@@ -3,6 +3,10 @@
 // pass while the real write fails is worse than no preflight at all.
 
 import matter from 'gray-matter';
+import { cjkRatio } from '../cjk.ts';
+import { splitBody } from '../markdown.ts';
+import { stripTakesFence } from '../takes-fence.ts';
+import { stripFactsFence } from '../facts-fence.ts';
 import type { ConnectionRules, WritePolicyV1 } from './policy-v1.ts';
 
 export type ViolationSeverity = 'error' | 'warning';
@@ -17,7 +21,8 @@ export interface PolicyViolation {
     | 'connection_id_not_slug_only'
     | 'connection_id_not_kebab'
     | 'connection_unresolved'
-    | 'server_managed_field_ignored';
+    | 'server_managed_field_ignored'
+    | 'body_language_not_english_first';
   severity: ViolationSeverity;
   field?: string;
   message: string;
@@ -116,6 +121,25 @@ function isOutOfScope(policy: WritePolicyV1, slug: string): boolean {
   if (policy.slug_rules.scope !== 'known_prefixes') return false;
   if (policy.type_path_rules.length === 0) return false;
   return matchTypePathRule(policy, slug) === null;
+}
+
+/**
+ * Language-rule exemption. Matches a slug against the policy's `exempt_slugs`
+ * globs: a leading star-slash means "any directory" (the shape the directory
+ * signage pages `concepts/readme`, `people/readme`, … need), a trailing
+ * slash-star means "this prefix and everything under it". Those pages are the
+ * repo's own human-facing wayfinding, not promoted knowledge, so the
+ * English-first rule was never aimed at them.
+ */
+function isLanguageExempt(policy: WritePolicyV1, slug: string): boolean {
+  const lower = slug.toLowerCase();
+  const basename = lower.split('/').pop() ?? lower;
+  return policy.language_rules.exempt_slugs.some((pattern) => {
+    if (pattern === lower) return true;
+    if (pattern.startsWith('*/')) return basename === pattern.slice(2);
+    if (pattern.endsWith('/*')) return lower.startsWith(pattern.slice(0, -1));
+    return false;
+  });
 }
 
 function checkConnections(
@@ -328,6 +352,28 @@ export async function validatePageAgainstPolicy(input: ValidatePageInput): Promi
         field: 'connections',
         message: `connection id "${id}" does not resolve to a page in this source`,
         fix: `create the target page first, or drop the connection. The repo lint treats an unresolved id as fatal at commit time.`,
+      });
+    }
+  }
+
+  // --- body language ---------------------------------------------------------
+  // Measured on the COMPILED TRUTH only. The convention this enforces
+  // (javan-brain SCHEMA.md principle 2) puts the other language in aliases,
+  // search phrases, the timeline and source quotes on purpose, so the timeline
+  // half of the body and the takes/facts fences are stripped before counting —
+  // a page with an English body and a Chinese timeline is CONFORMING, and a
+  // naive whole-body count would refuse it.
+  if (policy.language_rules.body === 'english_first' && !isLanguageExempt(policy, slug)) {
+    const { compiled_truth } = splitBody(body);
+    const measured = stripFactsFence(stripTakesFence(compiled_truth));
+    const ratio = cjkRatio(measured);
+    if (ratio >= policy.language_rules.max_cjk_ratio) {
+      violations.push({
+        code: 'body_language_not_english_first',
+        severity: policy.language_rules.severity === 'error' ? 'error' : 'warning',
+        field: 'body',
+        message: `compiled truth is ${Math.round(ratio * 100)}% CJK (limit ${Math.round(policy.language_rules.max_cjk_ratio * 100)}%); this source keeps promoted pages English-first`,
+        fix: 'Write the compiled truth in English — it is what retrieval, reranking and cross-agent context exchange run on. The original language belongs in aliases, search phrases, the `## Timeline` section, or quoted source material, none of which this check counts.',
       });
     }
   }
