@@ -2,6 +2,56 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.48.5.1] - 2026-09-10
+
+Fork release: the Javan patchset replayed onto upstream `v0.48.5.0`. Sixteen
+commits, down from twenty-seven, because five patches retired into upstream.
+
+### Retired into upstream
+
+- **The GPT-5.5 recipe entry.** Upstream's `src/core/ai/recipes/openai.ts`
+  now lists `gpt-5.5` alongside `gpt-5.6` and `gpt-5.2`, and
+  `model-pricing.ts` carries the canonical price.
+- **The reflex/volunteer import-cycle fix.** Upstream independently landed
+  the same leaf module, `src/core/context/reflex-rationale.ts`, with both
+  sides importing it statically. Replaying the fork's version would have
+  REVERTED upstream's `openclaw` volunteer channel, which the fork's older
+  copy of `VOLUNTEER_CHANNELS` predates.
+- **`takes propose` listing when invoked bare.** Upstream's `cmdPropose`
+  lists the pending queue itself.
+- **The fork's take-proposal promotion path** (`takes proposals`, the
+  multi-id `--accept`/`--reject`, and their plan/apply machinery). Upstream's
+  `acceptProposal`/`rejectProposal` are the markdown-canonical queue-to-page
+  route; carrying a second writer that reached the same table with raw SQL
+  was strictly worse. Only the batching layer survives — see below.
+
+### Kept, with the reason re-verified rather than assumed
+
+- **The post-write enrichment queue.** Upstream's maintenance sweep now
+  reconciles removals and honors the watermark it stamps, closing two of the
+  three reasons this patch existed. The third is unchanged: the sweep's
+  automatic trigger is armed on the stdio `serve` path, and `serve --http`
+  returns before that arming. A host whose MCP surface is HTTP never sweeps,
+  so remote writes would never have their links reconciled.
+- **The source write policy.** Still nothing equivalent upstream.
+- **Phase-local model routing and slug scoping for `propose_takes`.**
+
+### Changed
+
+- **`gbrain takes propose --apply-review <file.json>`** applies a whole
+  reviewed batch in one pass, calling upstream's accept/reject core per row.
+  A per-row failure is reported, never fatal, and the command exits 1 if any
+  row failed. `--dry-run` previews against the live pending queue.
+
+### Fixed
+
+- The fork's `post-write-enrichment` unit test gave its source a
+  `local_path` that does not exist. Upstream 0.48.x resolves that to
+  `repo_not_found` rather than the by-design DB-only `no_repo_configured`,
+  so put_page's storage_error guard fired. The test now creates a real temp
+  directory, matching the fix its Postgres sibling already carried, and
+  stops pinning the exact shape of the remote-skip payload.
+
 ## [0.48.5.0] - 2026-09-07
 
 **The community fix wave: 57 contributor pull requests adopted or reworked
