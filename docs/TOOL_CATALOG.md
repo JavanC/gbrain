@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 125 tools across 23 areas. **Starter** marks membership in the ~29-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 127 tools across 23 areas. **Starter** marks membership in the ~29-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -165,6 +165,7 @@ Every non-localOnly operation on the MCP surface: 125 tools across 23 areas. **S
 | `get_page` | Read a page by slug (supports optional fuzzy matching). | read | yes |  |
 | `get_raw_data` | Retrieve raw data for a page. | read |  |  |
 | `get_versions` | Page version history | read |  |  |
+| `get_write_contract` | Return the page-write contract for a source: which frontmatter fields you must supply, which ones the server fills or preserves, which page types each directory accepts, the connection-id rules, and a copy-pasteable template. | read |  |  |
 | `get_write_request` | Read your durable write receipt by request_id. | write | yes |  |
 | `list_pages` | List pages with optional filters. | read | yes |  |
 | `list_write_requests` | List your currently authorized write receipts in one source, newest first. | write | yes |  |
@@ -173,6 +174,7 @@ Every non-localOnly operation on the MCP surface: 125 tools across 23 areas. **S
 | `resolve_slugs` | Fuzzy-resolve a partial slug to matching page slugs | read | yes |  |
 | `restore_page` | v0.26.5 — restore a soft-deleted page (clear deleted_at) and re-create its markdown file on disk (the counterpart to delete_page removing it; the result write_through field reports the outcome). | write |  |  |
 | `revert_version` | Revert page to a previous version | write |  |  |
+| `validate_page` | Preflight a put_page payload against the source write contract WITHOUT writing anything. | read |  |  |
 
 ## schema
 

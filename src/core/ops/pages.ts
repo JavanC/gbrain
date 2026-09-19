@@ -332,7 +332,9 @@ export async function autoLinkWrittenPage(
 }
 
 /** Reconcile derived links only if the prepared canonical snapshot is still current. */
-async function runAutoLink(
+// Fork: post-write-enrichment (the durable queue for untrusted writes) runs
+// the same reconciliation out-of-band, so it needs this entry point.
+export async function runAutoLink(
   engine: BrainEngine,
   slug: string,
   opts?: { sourceId?: string },

@@ -14,7 +14,7 @@ export interface PostWriteEnrichmentResult {
     created: number;
     removed: number;
     errors: number;
-    unresolved: unknown[];
+    unresolved_count: number;
   };
   auto_timeline?: { created: number };
   skipped?: 'page_not_found' | 'disabled';
@@ -47,7 +47,7 @@ export async function runPostWriteEnrichment(
   const result: PostWriteEnrichmentResult = base;
 
   if (linksEnabled) {
-    result.auto_links = await runAutoLink(engine, input.slug, parsed, {
+    result.auto_links = await runAutoLink(engine, input.slug, {
       sourceId: input.sourceId,
     });
   }

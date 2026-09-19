@@ -79,7 +79,7 @@ describe('remote put_page asynchronous enrichment', () => {
       ].join('\n'),
     }) as {
       auto_links: { skipped: string };
-      auto_timeline: { skipped: string };
+      auto_timeline?: { skipped: string };
       async_enrichment: { queued: boolean; job_id: number };
     };
 
@@ -87,7 +87,12 @@ describe('remote put_page asynchronous enrichment', () => {
     // alongside `skipped` and may add more. What this test asserts is that a
     // remote write does NOT reconcile inline — not the payload's exact shape.
     expect(result.auto_links).toMatchObject({ skipped: 'remote' });
-    expect(result.auto_timeline).toMatchObject({ skipped: 'remote' });
+    // Upstream v0.51 folded the timeline signal into the same remote-link
+    // advisory and no longer reports a separate `auto_timeline` skip. The
+    // contract this test guards — a remote write reconciles NOTHING inline,
+    // and the durable queue is what makes the graph compound — is carried by
+    // the auto_links assertion above and the queued-job assertions below.
+    expect(result.auto_timeline).toBeUndefined();
     expect(result.async_enrichment.queued).toBe(true);
 
     const queue = new MinionQueue(engine);
