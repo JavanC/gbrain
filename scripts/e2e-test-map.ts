@@ -15,6 +15,12 @@
 // No brace expansion, no ?, no [ ].
 
 export const E2E_TEST_MAP: Record<string, string[]> = {
+  // Fork: the source write-policy gate and the durable post-write enrichment
+  // queue. Touching either module must run its own engine-parity e2e — the
+  // gate is fail-closed, so a silent regression stops accepting writes.
+  "src/core/write-policy/**": ["test/e2e/write-policy-postgres.test.ts", "test/e2e/write-policy-put-page-pglite.test.ts"],
+  "src/core/ops/write-contract.ts": ["test/e2e/write-policy-postgres.test.ts", "test/e2e/write-policy-put-page-pglite.test.ts"],
+  "src/core/post-write-enrichment*.ts": ["test/e2e/post-write-enrichment-postgres.test.ts"],
   "src/core/minions/errors.ts": ["test/e2e/subagent-gateway-path.test.ts", "test/e2e/delegated-http-worker.test.ts", "test/e2e/subagent-crash-replay-multi-provider.test.ts"],
   "src/core/harness/**": ["test/e2e/harness-access.test.ts"],
   "src/core/grants/**": ["test/e2e/client-grants.test.ts", "test/e2e/harness-access.test.ts", "test/e2e/delegated-grants-withdrawal.test.ts", "test/e2e/delegated-http-worker.test.ts"],
