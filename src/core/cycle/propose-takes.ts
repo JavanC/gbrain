@@ -908,20 +908,39 @@ class ProposeTakesPhase extends BaseCyclePhase {
     // the phase never ran. Upstream deliberately moved these cycle phases to
     // record the model they actually run (grade_takes / calibration_profile
     // moved the same way), so with no override we keep exactly that.
-    const phaseModelOverride = (await engine.getConfig('models.dream.propose_takes'))?.trim();
-    const resolvedModel = (opts.model?.trim() || phaseModelOverride)
-      // resolveModel returns at its cliFlag or configKey step here — one of the
-      // two is non-empty by construction — so it only does alias expansion.
-      // `fallback` is required by the type but unreachable from this call; it
-      // mirrors the no-override branch below so the two can't drift. No `tier`:
-      // that sits further down the chain and would only ever substitute a model
-      // this phase never ran.
-      ? await (await import('../model-config.ts')).resolveModel(engine, {
+    // Upstream's own test fixtures hand this phase a narrow mock engine that
+    // has no getConfig. The phase-local override is a fork ADDITION layered on
+    // top of upstream behavior, so it must not demand more of the engine than
+    // upstream's contract already guarantees — absent getConfig means "no
+    // override", which is exactly upstream's behavior.
+    const phaseModelOverride = typeof engine.getConfig === 'function'
+      ? (await engine.getConfig('models.dream.propose_takes'))?.trim()
+      : undefined;
+    // resolveModel returns at its cliFlag or configKey step here — one of the
+    // two is non-empty by construction — so it only does alias expansion.
+    // `fallback` is required by the type but unreachable from this call; it
+    // mirrors the no-override branch below so the two can't drift. No `tier`:
+    // that sits further down the chain and would only ever substitute a model
+    // this phase never ran.
+    //
+    // Same engine-contract caveat as phaseModelOverride above: resolveModel
+    // reads `models.aliases.*` through engine.getConfig, which upstream's
+    // narrow test-mock engines do not implement. With no getConfig there are
+    // no aliases to expand, so the requested model IS the resolved model —
+    // precisely upstream's own behavior.
+    const requestedModel = opts.model?.trim() || phaseModelOverride;
+    let resolvedModel: string;
+    if (!requestedModel) {
+      resolvedModel = getChatModel();
+    } else if (typeof engine.getConfig !== 'function') {
+      resolvedModel = requestedModel;
+    } else {
+      resolvedModel = await (await import('../model-config.ts')).resolveModel(engine, {
         cliFlag: opts.model,
         configKey: 'models.dream.propose_takes',
         fallback: getChatModel(),
-      })
-      : getChatModel();
+      });
+    }
     // The unique hex segment leads: extract-receipt slugs truncate run_id to
     // its first 8 chars (shortRunId, receipt-writer.ts) to build the
     // extracts/{date}/{kind}/{source_id}/{run_id_short}/round-{N} path. A

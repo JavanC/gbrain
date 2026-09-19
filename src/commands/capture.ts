@@ -451,15 +451,6 @@ export async function runCapture(engine: BrainEngine | null, args: string[], opt
       }
     }
     const receipt = isWriteReceipt(result.write_request) ? result.write_request : undefined;
-    if (receipt && receipt.state !== 'committed') {
-      // Accepted is a real receipt, but never a false claim that capture
-      // finished. Quiet pipelines must not receive a made-up page slug.
-      if (parsed.json) console.log(JSON.stringify(result, null, 2));
-      else console.error(`Capture ${receipt.state}; request_id ${receipt.request_id}. Retry the same request ID for its result.`);
-      return;
-    }
-    const persistence = result.persistence as { file_written?: boolean } | undefined;
-    const writeThrough = result.write_through as { written?: boolean; path?: string } | undefined;
     // Fork: a source-scoped write policy rejects a non-conforming page by
     // RETURNING an error shape rather than throwing, so the caller can
     // inspect machine-readable violations. Falling through to printReceipt()
@@ -473,9 +464,24 @@ export async function runCapture(engine: BrainEngine | null, args: string[], opt
       }
       if (typeof result.hint === 'string') console.error(result.hint);
       if (parsed.json) console.log(JSON.stringify(result, null, 2));
-      process.exit(1);
+      // Upstream wraps runCapture's body in a try/catch that converts a throw
+      // into setCliExitVerdict(1); calling process.exit() here would be
+      // swallowed by it. Use the same verdict channel every other CLI exit
+      // path in this file now uses.
+      const { setCliExitVerdict } = await import('../core/cli-force-exit.ts');
+      setCliExitVerdict(1);
+      return;
     }
 
+    if (receipt && receipt.state !== 'committed') {
+      // Accepted is a real receipt, but never a false claim that capture
+      // finished. Quiet pipelines must not receive a made-up page slug.
+      if (parsed.json) console.log(JSON.stringify(result, null, 2));
+      else console.error(`Capture ${receipt.state}; request_id ${receipt.request_id}. Retry the same request ID for its result.`);
+      return;
+    }
+    const persistence = result.persistence as { file_written?: boolean } | undefined;
+    const writeThrough = result.write_through as { written?: boolean; path?: string } | undefined;
     printReceipt({
       slug: result.slug as string,
       status: result.status as string | undefined,

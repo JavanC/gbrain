@@ -26,6 +26,7 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { runCapture } from '../src/commands/capture.ts';
+import { currentExitCode, _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import {
   _resetWritePolicyCacheForTests,
   _resetWritePolicySlugCacheForTests,
@@ -50,10 +51,8 @@ let engine: PGLiteEngine;
 let repoDir: string;
 let stderrLines: string[];
 let stdoutLines: string[];
-let exitCode: number | undefined;
 const origError = console.error;
 const origLog = console.log;
-const origExit = process.exit;
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
@@ -79,30 +78,24 @@ beforeEach(async () => {
   );
   stderrLines = [];
   stdoutLines = [];
-  exitCode = undefined;
   console.error = (...args: unknown[]) => { stderrLines.push(args.join(' ')); };
   console.log = (...args: unknown[]) => { stdoutLines.push(args.join(' ')); };
-  // runCapture calls process.exit(1) directly on a rejected write — throw
-  // instead so the test can observe it without actually killing the runner.
-  (process as unknown as { exit: (code?: number) => never }).exit = ((code?: number) => {
-    exitCode = code;
-    throw new Error('__process_exit__');
-  }) as never;
+  // Upstream v0.51 wraps runCapture's body in a try/catch that converts any
+  // throw into setCliExitVerdict(1), so a rejected write no longer calls
+  // process.exit() — it records the verdict and returns. Observe that instead.
+  _resetCliExitVerdictForTests();
 });
 
 afterEach(() => {
   console.error = origError;
   console.log = origLog;
-  process.exit = origExit;
 });
 
 describe('gbrain capture surfaces a rejected write-policy gate', () => {
   test('missing required field: prints the violation + fix, exits 1, no bland "written: false"', async () => {
-    await expect(
-      runCapture(engine, ['Body with no frontmatter fields', '--slug', 'inbox/policy-miss', '--source', 'policed']),
-    ).rejects.toThrow('__process_exit__');
+    await runCapture(engine, ['Body with no frontmatter fields', '--slug', 'inbox/policy-miss', '--source', 'policed']);
 
-    expect(exitCode).toBe(1);
+    expect(currentExitCode()).toBe(1);
     const combined = stderrLines.join('\n');
     expect(combined).toContain('policy_violation');
     // The actual violation (missing `tags`) must be named, not swallowed.
@@ -124,7 +117,7 @@ describe('gbrain capture surfaces a rejected write-policy gate', () => {
     } finally {
       rmSync(filePath, { force: true });
     }
-    expect(exitCode).toBeUndefined();
+    expect(currentExitCode()).toBe(0);
     const page = await engine.getPage('inbox/policy-ok', { sourceId: 'policed' });
     expect(page).not.toBeNull();
   });
