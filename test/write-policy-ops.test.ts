@@ -9,7 +9,9 @@
  * write path reaching the engine fails the test rather than passing silently.
  */
 
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { operations } from '../src/core/operations.ts';
 import type { Operation, OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -71,6 +73,47 @@ function ctx(overrides: Partial<OperationContext> = {}): OperationContext {
     sourceId: 'brain-a',
     ...overrides,
   } as OperationContext;
+}
+
+// --- real-engine fixture for the write path -------------------------------
+//
+// Upstream v0.51 routes every page mutation through submitPageMutation, which
+// bootstraps persistence metadata (brain identity, local writer, request
+// identity) BEFORE any operation-specific logic — the write-policy gate
+// included. The guarded proxy above therefore cannot serve the REAL write
+// path any more; it only serves reads and dry-run previews.
+//
+// The write-path tests get a real PGLite engine instead, and prove the
+// "writes nothing" claim by its OUTCOME (no page row afterwards) rather than
+// by the absence of engine method calls. That is the stronger assertion: the
+// old proxy proved a call sequence, and a call sequence is exactly what
+// upstream is free to change underneath the fork.
+let realEngine: PGLiteEngine;
+const WRITE_SOURCE = 'brain-a';
+
+beforeAll(async () => {
+  realEngine = new PGLiteEngine();
+  await realEngine.connect({});
+  await realEngine.initSchema();
+  await registerLocalWriter(realEngine, 'cli');
+  await realEngine.executeRaw(
+    `INSERT INTO sources (id, name) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING`,
+    [WRITE_SOURCE, 'Policed brain'],
+  );
+}, 120_000);
+
+afterAll(async () => { await realEngine?.disconnect(); });
+
+/** A context whose writes actually reach upstream's mutation funnel. */
+function writeCtx(overrides: Partial<OperationContext> = {}): OperationContext {
+  return ctx({ engine: realEngine as unknown as BrainEngine, sourceId: WRITE_SOURCE, ...overrides });
+}
+
+/** The gate's core promise: a rejected write leaves no page behind. */
+async function expectNoPage(slug: string): Promise<void> {
+  const rows = await realEngine.executeRaw<{ n: number }>(
+    'SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1 AND slug = $2', [WRITE_SOURCE, slug]);
+  expect(rows[0]?.n ?? 0).toBe(0);
 }
 
 function withPolicy(policyFor: Record<string, 'active' | 'error' | 'none'>) {
@@ -181,7 +224,7 @@ describe('validate_page', () => {
   test('preflight and gate agree — the same payload, the same verdict', async () => {
     withPolicy({ 'brain-a': 'active' });
     const pre = await validate_page.handler(ctx(), { slug: 'concepts/x', content: BAD }) as Record<string, unknown>;
-    const write = await put_page.handler(ctx(), { slug: 'concepts/x', content: BAD }) as Record<string, unknown>;
+    const write = await put_page.handler(writeCtx(), { slug: 'concepts/x', content: BAD }) as Record<string, unknown>;
     expect(pre.valid).toBe(false);
     expect(write.error).toBe('policy_violation');
     expect(write.violations).toEqual(pre.violations);
@@ -191,7 +234,7 @@ describe('validate_page', () => {
 describe('put_page gate', () => {
   test('a violation returns machine-readable errors and writes nothing', async () => {
     withPolicy({ 'brain-a': 'active' });
-    const res = await put_page.handler(ctx(), { slug: 'concepts/x', content: BAD }) as Record<string, unknown>;
+    const res = await put_page.handler(writeCtx(), { slug: 'concepts/x', content: BAD }) as Record<string, unknown>;
     expect(res).toMatchObject({
       error: 'policy_violation',
       written: false,
@@ -200,11 +243,13 @@ describe('put_page gate', () => {
       contract_version: '4',
     });
     expect(res.hint).toContain('get_write_contract');
+    // The claim in this test's name, proven by outcome.
+    await expectNoPage('concepts/x');
   });
 
   test('a slug outside the source\'s directories is refused', async () => {
     withPolicy({ 'brain-a': 'active' });
-    const res = await put_page.handler(ctx(), { slug: 'scratch/x', content: GOOD }) as Record<string, unknown>;
+    const res = await put_page.handler(writeCtx(), { slug: 'scratch/x', content: GOOD }) as Record<string, unknown>;
     expect(res.error).toBe('policy_violation');
     expect((res.violations as Array<{ code: string }>).map((v) => v.code)).toContain('slug_outside_known_prefix');
   });
@@ -212,17 +257,17 @@ describe('put_page gate', () => {
   test('a path-qualified connection id is refused', async () => {
     withPolicy({ 'brain-a': 'active' });
     const content = '---\ntitle: A\ntype: concept\ntags: [t]\nconnections:\n  - id: concepts/other\n---\n\nBody.\n';
-    const res = await put_page.handler(ctx(), { slug: 'concepts/x', content }) as Record<string, unknown>;
+    const res = await put_page.handler(writeCtx(), { slug: 'concepts/x', content }) as Record<string, unknown>;
     expect((res.violations as Array<{ code: string }>).map((v) => v.code)).toContain('connection_id_not_slug_only');
   });
 
   test('an unloadable policy fails CLOSED — no write, and the reason is explicit', async () => {
     withPolicy({ 'brain-a': 'error' });
-    const res = await put_page.handler(ctx(), { slug: 'concepts/x', content: GOOD }) as Record<string, unknown>;
+    const res = await put_page.handler(writeCtx(), { slug: 'concepts/x', content: GOOD }) as Record<string, unknown>;
     expect(res).toMatchObject({ error: 'write_policy_unavailable', written: false });
     // Filesystem paths are local-only detail.
     expect(res.policy_path).toBeUndefined();
-    const local = await put_page.handler(ctx({ remote: false }), { slug: 'concepts/x', content: GOOD }) as Record<string, unknown>;
+    const local = await put_page.handler(writeCtx({ remote: false }), { slug: 'concepts/x', content: GOOD }) as Record<string, unknown>;
     expect(local.policy_path).toBe('/tmp/gbrain.yml');
   });
 
@@ -243,7 +288,7 @@ describe('put_page gate', () => {
   describe('bypass_policy trust gate', () => {
     test('a remote caller cannot bypass the gate', async () => {
       withPolicy({ 'brain-a': 'active' });
-      const res = await put_page.handler(ctx({ remote: true }), {
+      const res = await put_page.handler(writeCtx({ remote: true }), {
         slug: 'concepts/x', content: BAD, bypass_policy: true,
       }) as Record<string, unknown>;
       expect(res.error).toBe('policy_violation');

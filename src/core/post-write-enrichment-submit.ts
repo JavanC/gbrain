@@ -44,13 +44,18 @@ export async function queuePostWriteEnrichment(
   ctx: { engine: BrainEngine },
   sourceId: string,
   slug: string,
+  replay = false,
 ): Promise<
   | { queued: true; job_id: number }
-  | { skipped: 'disabled' }
+  | { skipped: 'disabled' | 'replay' }
   | { error: string }
 > {
   try {
     if (!(await isAsyncPostWriteEnrichmentEnabled(ctx.engine))) return { skipped: 'disabled' };
+    // A replay performed no new write, so it must not queue a second job —
+    // but it still reports, because upstream's idempotency contract says a
+    // repeated request returns the shape its original returned.
+    if (replay) return { skipped: 'replay' };
     return await submitPostWriteEnrichment(ctx.engine, { slug, sourceId });
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };

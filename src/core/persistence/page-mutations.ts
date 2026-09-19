@@ -55,7 +55,13 @@ export async function submitPageMutation(ctx: OperationContext,
     await submissionAuthority(ctx, prior.operation, prior.source_id, prior.source_incarnation, prior.slug);
     await authorizeStoredRequest(ctx.engine, prior);
     assertReplayIntent(prior, intentDigest({ operation: input.operation, sourceId, slug: prior.slug, callerIntent }));
-    return writeResponse(await waitForWrite(ctx.engine, prior, ctx.config, input.waitMs));
+    const replayed = writeResponse(await waitForWrite(ctx.engine, prior, ctx.config, input.waitMs));
+    // Fork: report the same key the first call reported (see below), so an
+    // idempotent replay returns the same shape. Never re-queues.
+    if (ctx.remote !== false && isGatedOperation(input.operation) && !replayed.error) {
+      replayed.async_enrichment = await queuePostWriteEnrichment(ctx, prior.source_id, prior.slug, true);
+    }
+    return replayed;
   }
   if (input.operation === 'delete_page') assertPurgeParams(p, ctx.remote);
   const [source] = await ctx.engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null }>(
