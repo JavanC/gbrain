@@ -81,6 +81,11 @@ describe.skipIf(skip)('write policy on Postgres', () => {
     assertSafeE2eDatabaseUrl(databaseUrl!);
     await engine.connect({ database_url: databaseUrl! });
     await engine.initSchema();
+    // Upstream refuses Postgres writes to a source that has a checkout path but
+    // no canonical owner; this fixture only needs local_path for the policy
+    // lookup, so it opts into database-only writes (upstream's own fixture
+    // pattern, test/e2e/unbound-source-postgres.test.ts).
+    await engine.setConfig('persistence.unbound_write', 'database_only');
     await engine.executeRaw('DELETE FROM pages WHERE source_id = $1', [SOURCE]);
     await engine.executeRaw('DELETE FROM sources WHERE id = $1', [SOURCE]);
     await engine.executeRaw(
@@ -137,8 +142,9 @@ describe.skipIf(skip)('write policy on Postgres', () => {
        WHERE source_id = $1 AND slug = $2`,
       [SOURCE, 'concepts/pg-real'],
     );
+    // Upstream requires a replace to name the revision it replaces (or force).
     const res = await put_page.handler(ctx(), {
-      slug: 'concepts/pg-real',
+      slug: 'concepts/pg-real', force: true,
       content: '---\ntitle: Rewritten\ntype: concept\ntags: [t]\n---\n\nNew body.\n',
     }) as Record<string, unknown>;
     expect(res.error).toBeUndefined();

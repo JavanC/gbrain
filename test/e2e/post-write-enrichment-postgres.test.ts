@@ -28,6 +28,9 @@ describeE2E('post-write enrichment queue on Postgres', () => {
     await engine.setConfig('auto_link', 'true');
     await engine.setConfig('auto_timeline', 'true');
     await engine.setConfig('writer.async_enrichment', 'true');
+    // The source needs a checkout path but has no canonical owner; opt into
+    // database-only writes (upstream's test/e2e/unbound-source-postgres.test.ts).
+    await engine.setConfig('persistence.unbound_write', 'database_only');
     // put_page throws storage_error on any un-written page including
     // repo_not_found, so the source needs a REAL directory on disk.
     const alphaLocalPath = mkdtempSync(join(tmpdir(), 'gbrain-post-write-enrichment-pg-'));
