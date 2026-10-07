@@ -2,10 +2,10 @@
  * `gbrain capture`'s result handling assumed put_page always returns the
  * success shape ({slug, status, chunks, write_through}). A source-scoped
  * write policy (src/core/write-policy/) rejects a non-conforming page by
- * RETURNING ({error, violations, hint}) rather than throwing — a normal
+ * RETURNING ({error, violations, suggestion}) rather than throwing — a normal
  * return value, by design, so callers can inspect machine-readable
  * violations. Falling through to the success-shaped receipt printer
- * silently dropped `error`/`violations`/`hint` and printed a bare
+ * silently dropped `error`/`violations`/`suggestion` and printed a bare
  * "written: false" / "status: unknown" with no indication of why.
  *
  * Reproduced live against production 2026-08-30 during the v0.47.4.1

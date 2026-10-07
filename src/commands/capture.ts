@@ -462,7 +462,7 @@ export async function runCapture(engine: BrainEngine | null, args: string[], opt
       for (const v of violations) {
         console.error(`  ${v.field ? `[${v.field}] ` : ''}${v.message}${v.fix ? ` — fix: ${v.fix}` : ''}`);
       }
-      if (typeof result.hint === 'string') console.error(result.hint);
+      if (typeof result.suggestion === 'string') console.error(result.suggestion);
       if (parsed.json) console.log(JSON.stringify(result, null, 2));
       // Upstream wraps runCapture's body in a try/catch that converts a throw
       // into setCliExitVerdict(1); calling process.exit() here would be

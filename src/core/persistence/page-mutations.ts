@@ -1,4 +1,4 @@
-import { applyMutationWritePolicy, isGatedOperation, writePolicyRefusalResponse } from '../write-policy/mutation-gate.ts';
+import { applyMutationWritePolicy, isGatedOperation, withWritePolicyReport, writePolicyRefusalResponse } from '../write-policy/mutation-gate.ts';
 import { withPostWriteEnrichment } from '../post-write-enrichment-submit.ts';
 import { randomUUID } from 'node:crypto';
 import { pageQuarantinedNotice } from '../quarantine.ts';
@@ -250,8 +250,8 @@ export async function submitPageMutation(ctx: OperationContext,
   }
   const response = await withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, row, ctx.config, waitMs())), false));
   emitFenceNotice(ctx, response, row.slug);
-  return withPostWriteEnrichment(ctx, input.operation, row, // Fork: queue remote link/timeline enrichment
-    { ...response, ...(prepared.typeWarning ? { type_warning: prepared.typeWarning } : {}), ...(prepared.slugAdvisory ? { slug_advisory: prepared.slugAdvisory } : {}) }, false);
+  return withPostWriteEnrichment(ctx, input.operation, row, withWritePolicyReport(ctx, input.operation, // Fork: policy report + remote enrichment
+    { ...response, ...(prepared.typeWarning ? { type_warning: prepared.typeWarning } : {}), ...(prepared.slugAdvisory ? { slug_advisory: prepared.slugAdvisory } : {}) }), false);
 }
 
 /**
