@@ -12,6 +12,8 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
+import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
+import { randomUUID } from 'node:crypto';
 import { operations } from '../src/core/operations.ts';
 import type { Operation, OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -26,6 +28,7 @@ import {
 const put_page = operations.find((o) => o.name === 'put_page') as Operation;
 const validate_page = operations.find((o) => o.name === 'validate_page') as Operation;
 const get_write_contract = operations.find((o) => o.name === 'get_write_contract') as Operation;
+const put_pages = operations.find((o) => o.name === 'put_pages') as Operation;
 
 const POLICY = parseWritePolicy({
   contract_version: '4',
@@ -242,7 +245,7 @@ describe('put_page gate', () => {
       source_id: 'brain-a',
       contract_version: '4',
     });
-    expect(res.hint).toContain('get_write_contract');
+    expect(res.suggestion).toContain('get_write_contract');
     // The claim in this test's name, proven by outcome.
     await expectNoPage('concepts/x');
   });
@@ -283,6 +286,35 @@ describe('put_page gate', () => {
     const res = await put_page.handler(ctx({ dryRun: true }), { slug: 'concepts/x', content: BAD }) as Record<string, unknown>;
     expect(res.error).toBe('policy_violation');
     expect(res.dry_run).toBeUndefined();
+  });
+
+  // Upstream v0.60 added put_pages, which prepares each member through the same
+  // preparePageAdmission funnel. Without the gate there, a remote agent could
+  // sidestep the contract by batching.
+  test('each put_pages member is gated the same way — a refused page writes nothing', async () => {
+    withPolicy({ 'brain-a': 'active' });
+    const res = await put_pages.handler(writeCtx(), {
+      request_id: randomUUID(),
+      pages: [{ slug: 'concepts/batch-bad', content: BAD }],
+    });
+    expect(JSON.stringify(res)).toContain('policy_violation');
+    await expectNoPage('concepts/batch-bad');
+  });
+
+  // Upstream v0.60 also routes sync imports and internal repairs through
+  // put_page. Those submit without the op-level opt-in and must not be judged:
+  // the repo's own files are governed by its lint, not by the gate.
+  test('an internal put_page submission (no op-level opt-in) is not judged', async () => {
+    withPolicy({ 'brain-a': 'active' });
+    const res = await submitPageMutation(writeCtx({ remote: false }), {
+      operation: 'put_page', params: { slug: 'concepts/internal-rewrite', content: BAD },
+    });
+    expect(res.error).not.toBe('policy_violation');
+    expect(res.violations).toBeUndefined();
+    // And it actually landed — the gate did not silently swallow it either.
+    const rows = await realEngine.executeRaw<{ n: number }>(
+      'SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1 AND slug = $2', [WRITE_SOURCE, 'concepts/internal-rewrite']);
+    expect(rows[0]?.n ?? 0).toBe(1);
   });
 
   describe('bypass_policy trust gate', () => {

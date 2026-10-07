@@ -88,7 +88,7 @@ export async function runMutationWritePolicy(
           source_id: input.sourceId ?? null,
           contract_version: gate.policy.contract_version,
           violations: gate.result.violations,
-          hint: 'Nothing was written. Call get_write_contract for this source\'s field contract, fix the frontmatter, then retry (validate_page checks without writing).',
+          suggestion: 'Nothing was written. Call get_write_contract for this source\'s field contract, fix the frontmatter, then retry (validate_page checks without writing).',
         },
       };
     }
@@ -116,7 +116,7 @@ export class WritePolicyRefusal extends OperationError {
   constructor(readonly response: Record<string, unknown>) {
     super('invalid_params',
       typeof response.message === 'string' ? response.message : 'The source write policy refused this page; nothing was written.',
-      typeof response.hint === 'string' ? response.hint : 'Call get_write_contract for this source, fix the page, then retry.');
+      typeof response.suggestion === 'string' ? response.suggestion : 'Call get_write_contract for this source, fix the page, then retry.');
     this.name = 'WritePolicyRefusal';
   }
 
@@ -125,15 +125,31 @@ export class WritePolicyRefusal extends OperationError {
   }
 }
 
+/**
+ * The passing gate's report, handed from `preparePageAdmission` (where the
+ * gate runs) to `submitPageMutation` (where the response is built) without
+ * widening upstream's prepare return type. Keyed by the call's ctx object.
+ */
+const passedReports = new WeakMap<object, PolicyReport>();
+
 /** Gate a prepared page intent in place: throws on refusal, applies normalized content on pass. */
 export async function applyMutationWritePolicy(
   ctx: OperationContext,
   input: { sourceId: string | undefined; slug: string; intent: Record<string, unknown>; bypass?: unknown },
 ): Promise<void> {
+  passedReports.delete(ctx);
   const outcome = await runMutationWritePolicy(ctx, {
     sourceId: input.sourceId, slug: input.slug, content: input.intent.content, bypass: input.bypass });
   if (outcome.rejection) throw new WritePolicyRefusal(outcome.rejection);
   if (outcome.content !== undefined) input.intent.content = outcome.content;
+  if (outcome.report) passedReports.set(ctx, outcome.report);
+}
+
+/** `submitPageMutation`'s response: add `policy` (contract satisfied + warnings) when the gate passed this call. */
+export function withWritePolicyReport(ctx: object, operation: string, response: Record<string, unknown>): Record<string, unknown> {
+  const report = isGatedOperation(operation) ? passedReports.get(ctx) : undefined;
+  passedReports.delete(ctx);
+  return report ? { ...response, policy: report } : response;
 }
 
 /** `submitPageMutation`'s catch: a policy refusal becomes the response; anything else is rethrown. */

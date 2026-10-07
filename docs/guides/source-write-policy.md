@@ -12,6 +12,10 @@ A **source write policy** moves that contract to where the agent can reach it:
 - `validate_page` checks a payload without writing.
 - `put_page` enforces the same rules **before** the DB write. A violation
   writes nothing — no page row, no repo write-through, no auto-link.
+  `capture` and every page of a `put_pages` batch go through the same gate;
+  a refused batch page is reported as that page's refusal. The repo's own
+  files (sync imports) and internal maintenance rewrites are not judged —
+  the repo's lint governs those.
 
 Opt-in per source. A source with no policy behaves exactly as gbrain always
 has, and no source's rules leak into another's.

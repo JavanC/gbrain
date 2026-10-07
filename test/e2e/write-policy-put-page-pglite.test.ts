@@ -78,21 +78,28 @@ function ctx(sourceId: string, overrides: Partial<OperationContext> = {}): Opera
   } as OperationContext;
 }
 
+const repoDirs: string[] = [];
+
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  repoDir = mkdtempSync(join(tmpdir(), 'gbrain-write-policy-'));
-  writeFileSync(join(repoDir, 'gbrain.yml'), POLICY_YML);
 });
 
 afterAll(async () => {
   await engine.disconnect();
-  rmSync(repoDir, { recursive: true, force: true });
+  for (const dir of repoDirs) rmSync(dir, { recursive: true, force: true });
 });
 
 beforeEach(async () => {
   await resetPgliteState(engine);
+  // A fresh checkout per test: upstream stamps a physical-root ownership
+  // marker into the checkout on the first accepted write, and a marker left
+  // by a previous test's (now reset) brain identity is refused as
+  // recovery_required — correctly, for a real checkout.
+  repoDir = mkdtempSync(join(tmpdir(), 'gbrain-write-policy-'));
+  repoDirs.push(repoDir);
+  writeFileSync(join(repoDir, 'gbrain.yml'), POLICY_YML);
   _resetWritePolicyCacheForTests();
   _resetWritePolicySlugCacheForTests();
   await engine.executeRaw(
@@ -164,14 +171,17 @@ describe('write policy end-to-end (PGLite)', () => {
   });
 
   test('a full-content replace that omits `created` no longer drops it', async () => {
-    await put_page.handler(ctx(POLICED), { slug: 'concepts/keeper', content: GOOD });
-    await engine.executeRaw(
-      `UPDATE pages SET frontmatter = '{"created":"2019-01-02"}'::jsonb WHERE slug = $1 AND source_id = $2`,
-      ['concepts/keeper', POLICED],
-    );
+    // Seed the stored value through a real write (a raw SQL edit would diverge
+    // from the write-through canonical file, which upstream refuses as
+    // source_changed). On create, a supplied `created` is kept.
+    const seeded = await put_page.handler(ctx(POLICED), {
+      slug: 'concepts/keeper', content: GOOD.replace('tags:', 'created: "2019-01-02"\ntags:'),
+    }) as Record<string, unknown>;
+    expect(seeded.error).toBeUndefined();
 
+    // Upstream requires a replace to name the revision it replaces (or force).
     const res = await put_page.handler(ctx(POLICED), {
-      slug: 'concepts/keeper',
+      slug: 'concepts/keeper', force: true,
       content: '---\ntitle: Rewritten\ntype: concept\ntags: [t]\n---\n\nNew body.\n',
     }) as Record<string, unknown>;
 
