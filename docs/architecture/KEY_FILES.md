@@ -77,6 +77,7 @@ boundary and add its link here rather than raising the cap.
 | [Google connector + open-loop engine (key files cluster)](key-files/google-and-loops.md) | Cross-file subsystem contract |
 | [Google And Loops (continued)](key-files/google-and-loops-continued.md) | Remaining cross-file entries |
 | [Always-loaded core memory (key files cluster)](key-files/core-memory.md) | Core tier, write-path guard and lock order, delivery lanes, pressure notice |
+| [Fork: source write policy + post-write enrichment](key-files/fork-write-policy.md) | `src/core/write-policy/`, `src/core/ops/write-contract.ts`, `src/core/post-write-enrichment*.ts` (fork-owned) |
 
 ## BrainBench — in a sibling repo
 
