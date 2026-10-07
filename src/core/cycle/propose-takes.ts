@@ -897,68 +897,8 @@ class ProposeTakesPhase extends BaseCyclePhase {
       opts.deadlineMs ?? resolveProposeTakesDeadlineMs(opts.deadlineAtMs, Date.now());
     const phaseStartMs = Date.now();
 
-    // Phase-local model routing, layered ON TOP of upstream's behavior rather
-    // than replacing it. `models.dream.propose_takes` exists so this phase can
-    // run a stronger model than the brain's global chat model without changing
-    // `models.chat` for everything else.
-    //
-    // Only consult the resolver when an override actually exists. Handing
-    // `resolveModel` a tier makes it fall through to that tier's default
-    // (a hardcoded id) whenever the key is unset — which would report a model
-    // the phase never ran. Upstream deliberately moved these cycle phases to
-    // record the model they actually run (grade_takes / calibration_profile
-    // moved the same way), so with no override we keep exactly that.
-    // Upstream's own test fixtures hand this phase a narrow mock engine that
-    // has no getConfig. The phase-local override is a fork ADDITION layered on
-    // top of upstream behavior, so it must not demand more of the engine than
-    // upstream's contract already guarantees — absent getConfig means "no
-    // override", which is exactly upstream's behavior.
-    const phaseModelOverride = typeof engine.getConfig === 'function'
-      ? (await engine.getConfig('models.dream.propose_takes'))?.trim()
-      : undefined;
-    // resolveModel returns at its cliFlag or configKey step here — one of the
-    // two is non-empty by construction — so it only does alias expansion.
-    // `fallback` is required by the type but unreachable from this call; it
-    // mirrors the no-override branch below so the two can't drift. No `tier`:
-    // that sits further down the chain and would only ever substitute a model
-    // this phase never ran.
-    //
-    // Same engine-contract caveat as phaseModelOverride above: resolveModel
-    // reads `models.aliases.*` through engine.getConfig, which upstream's
-    // narrow test-mock engines do not implement. With no getConfig there are
-    // no aliases to expand, so the requested model IS the resolved model —
-    // precisely upstream's own behavior.
-    const requestedModel = opts.model?.trim() || phaseModelOverride;
-    let resolvedModel: string;
-    if (!requestedModel) {
-      resolvedModel = getChatModel();
-    } else if (typeof engine.getConfig !== 'function') {
-      resolvedModel = requestedModel;
-    } else {
-      resolvedModel = await (await import('../model-config.ts')).resolveModel(engine, {
-        cliFlag: opts.model,
-        configKey: 'models.dream.propose_takes',
-        fallback: getChatModel(),
-      });
-    }
-    // The unique hex segment leads: extract-receipt slugs truncate run_id to
-    // its first 8 chars (shortRunId, receipt-writer.ts) to build the
-    // extracts/{date}/{kind}/{source_id}/{run_id_short}/round-{N} path. A
-    // literal "propose-" prefix here would eat that whole budget, so every
-    // propose_takes receipt collapsed to the same non-disambiguating
-    // "propose" folder regardless of which run wrote it (#3443 trimmed the
-    // boundary hyphen this produced but didn't fix the root cause). Leading
-    // with randomUUID gives shortRunId real per-run entropy; "propose" stays
-    // in the id for human readability in `gbrain takes proposals`.
-    const proposalRunId = `${randomUUID().slice(0, 8)}-propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}`;
-
-    // The probe, the skip report, and the recorded model_id must all name the
-    // model this phase ACTUALLY runs — which is resolvedModel, since
-    // `models.dream.propose_takes` may point somewhere other than the gateway
-    // chat model. Upstream added the provider probe against its own
-    // `opts.model ?? getChatModel()`; keeping that here would probe a model
-    // the phase never calls and skip on a provider it never needed.
-    const modelId = resolvedModel;
+    const proposalRunId = proposeTakesRunId(); // Fork: receipt-safe run id (helper at module end)
+    const modelId = await resolveProposeTakesModel(engine, opts.model); // Fork: phase-routed model
 
     // #4494: configurable extractor output caps (dream.triage.max_tokens
     // precedent — floor 256, retry clamped >= base, fail-open to the #3763
@@ -1045,8 +985,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
       cache_hits: 0,
       cache_misses: 0,
       proposals_inserted: 0,
-      tombstones_written: 0,
-      pages_skipped_scope: 0,
+      tombstones_written: 0, pages_skipped_scope: 0, // Fork: slug-scope skips
       budget_exhausted: false,
       llm_calls_succeeded: 0,
       llm_calls_failed: 0,
@@ -1073,14 +1012,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
     // GBRA-130 A-25: a page that failed before at this content hash and prompt
     // version is retried after the fresh pages, so failing pages at the head of
     // the list cannot halt the run before the rest are tried.
-    // Fork: scope filtering happens per page below, so the SQL LIMIT must not be the
-    // user's pageLimit when globs are in play: fetching `pageLimit` rows and
-    // THEN dropping most of them processes a handful of pages instead of
-    // `pageLimit` matching ones. Widen the candidate window when scoping is
-    // active and stop once pageLimit pages have actually been processed.
-    const scoped = (opts.includeSlugs?.length ?? 0) > 0 || (opts.excludeSlugs?.length ?? 0) > 0;
-    const fetchLimit = scoped ? Math.max(pageLimit, SCOPED_CANDIDATE_WINDOW) : pageLimit;
-    const listed = await listCandidatePages(engine, scope, fetchLimit, await proposeTakesTypes(engine));
+    const listed = await listCandidatePages(engine, scope, scopedFetchLimit(opts, pageLimit), await proposeTakesTypes(engine)); // Fork: wider window under slug scoping
     const failures = await ProposeTakesFailures.load(engine, listed.map(page => page.source_id ?? scope.sourceId ?? 'default'), promptVersion);
     const pages = failures.order(listed, page => [page.source_id ?? scope.sourceId ?? 'default', contentHash(page.compiled_truth ?? '')]);
 
@@ -1094,12 +1026,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
     const llmHalt = createGlobalLlmHaltTracker();
 
     for (const page of pages) {
-      // Stop once pageLimit pages have actually been PROCESSED. Under scoping
-      // the loop walks a wider candidate window, so counting processed pages
-      // (not iterations) is what makes `--propose-limit` mean "this many
-      // matching pages" rather than "this many rows looked at".
-      if (result.cache_hits + result.cache_misses >= pageLimit) break;
-
+      if (result.cache_hits + result.cache_misses >= pageLimit) break; // Fork: --propose-limit counts processed pages
       // Phase deadline check. Break (not throw) so the phase returns a
       // partial result with deadline_hit:true; work already banked stays.
       const elapsedMs = Date.now() - phaseStartMs;
@@ -1115,14 +1042,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
       result.pages_scanned += 1;
       this.tick(opts);
 
-      // Scope filter. Counted in pages_scanned above (the receipt's
-      // "considered" number) but costs nothing further — no hash, no fence
-      // parse, no LLM call.
-      if (!isSlugIncluded(page.slug, opts.includeSlugs, opts.excludeSlugs)) {
-        result.pages_skipped_scope += 1;
-        continue;
-      }
-
+      if (!isSlugIncluded(page.slug, opts.includeSlugs, opts.excludeSlugs)) { result.pages_skipped_scope += 1; continue; } // Fork: slug scope (no hash/LLM)
       // Skip pages that have NO prose body (e.g. metadata-only entity stubs).
       const body = page.compiled_truth ?? '';
       if (body.trim().length === 0) continue;
@@ -1148,7 +1068,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
 
       // Budget pre-check before the LLM call. Estimate: ~1500 input tokens + 500 output.
       const budget = this.checkBudget({
-        modelId: resolvedModel,
+        modelId,
         estimatedInputTokens: 1500,
         maxOutputTokens: 500,
       });
@@ -1172,7 +1092,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
           pagePath: page.slug,
           pageBody: body,
           existingTakes,
-          modelHint: resolvedModel,
+          modelHint: modelId, // Fork: the phase-routed model, not only an explicit --model
           // #4494: configurable output caps (see resolution above).
           maxTokens: extractorMaxTokens,
           retryMaxTokens: extractorRetryMaxTokens,
@@ -1248,10 +1168,8 @@ class ProposeTakesPhase extends BaseCyclePhase {
             p.domain ?? null,
             JSON.stringify(existingTakes),
             // #4737: prefer the response-derived model (what actually
-            // answered) over the requested one for provenance. The requested
-            // one is the PHASE-ROUTED model (models.dream.propose_takes), not
-            // the brain's global chat model.
-            p.served_model ?? resolvedModel,
+            // answered) over the requested one for provenance.
+            p.served_model ?? modelId,
           ],
         );
         result.proposals_inserted += inserted.length;
@@ -1411,3 +1329,49 @@ export const __testing = {
   extractExistingTakesForDedup,
   listCandidatePages,
 };
+
+// ---------------------------------------------------------------------------
+// Fork helpers, kept outside ProposeTakesPhase.process so the upstream method
+// carries one-line call sites (function-size ratchet; smaller rebase surface).
+// ---------------------------------------------------------------------------
+
+/**
+ * Phase-local model routing layered ON TOP of upstream's `opts.model ??
+ * getChatModel()`. `models.dream.propose_takes` lets this phase run a stronger
+ * model than the brain's global chat model. The resolver is consulted only
+ * when an override exists: handing `resolveModel` a tier would fall through to
+ * a hardcoded tier default when the key is unset, recording a model the phase
+ * never ran. The probe, the budget check, the extractor and the recorded
+ * model_id all use this one value.
+ *
+ * Upstream's narrow test-mock engines have no getConfig; absent getConfig means
+ * "no override and no aliases", which is exactly upstream's behavior.
+ */
+export async function resolveProposeTakesModel(engine: BrainEngine, cliModel: string | undefined): Promise<string> {
+  const hasConfig = typeof engine.getConfig === 'function';
+  const override = hasConfig ? (await engine.getConfig('models.dream.propose_takes'))?.trim() : undefined;
+  const requested = cliModel?.trim() || override;
+  if (!requested) return getChatModel();
+  if (!hasConfig) return requested;
+  // Returns at the cliFlag or configKey step (one is non-empty), so this only
+  // expands aliases; `fallback` is required by the type but unreachable.
+  return (await import('../model-config.ts')).resolveModel(engine, {
+    cliFlag: cliModel, configKey: 'models.dream.propose_takes', fallback: getChatModel(),
+  });
+}
+
+/**
+ * The unique hex segment leads: extract-receipt slugs truncate run_id to its
+ * first 8 chars (shortRunId, receipt-writer.ts), so upstream's literal
+ * `propose-` prefix collapsed every run's receipt into the same "propose"
+ * folder. "propose" stays in the id for readability in `gbrain takes proposals`.
+ */
+export function proposeTakesRunId(now: Date = new Date()): string {
+  return `${randomUUID().slice(0, 8)}-propose-${now.toISOString().slice(0, 19).replace(/[-:T]/g, '')}`;
+}
+
+/** Under slug scoping, fetch a wider candidate window than pageLimit (scope filters in JS). */
+function scopedFetchLimit(opts: { includeSlugs?: string[]; excludeSlugs?: string[] }, pageLimit: number): number {
+  const scoped = (opts.includeSlugs?.length ?? 0) > 0 || (opts.excludeSlugs?.length ?? 0) > 0;
+  return scoped ? Math.max(pageLimit, SCOPED_CANDIDATE_WINDOW) : pageLimit;
+}

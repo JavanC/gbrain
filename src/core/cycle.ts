@@ -526,12 +526,7 @@ export interface CycleOpts {
   yieldBetweenPhases?: () => Promise<void>;
   /** #7241: awaited as each selected phase starts its work (index and count within this cycle's selection); errors are logged, never fatal. */
   onPhaseStart?: (phase: CyclePhase, index: number, count: number) => Promise<void> | void;
-  /** Include slug globs for propose_takes. Repeatable from CLI (--propose-include). */
-  proposeInclude?: string[];
-  /** Exclude slug globs for propose_takes. Repeatable from CLI (--propose-exclude). */
-  proposeExclude?: string[];
-  /** Page scan limit for propose_takes (--propose-limit). Counts MATCHING pages. */
-  proposeLimit?: number;
+  proposeInclude?: string[]; proposeExclude?: string[]; proposeLimit?: number; // Fork: dream --propose-include/-exclude/-limit (limit counts MATCHING pages)
   /**
    * Generic in-phase keepalive (v0.23). Long-running phases (synthesize
    * waiting on a fan-out aggregator, patterns rolling up reflections)
@@ -2745,15 +2740,7 @@ async function runCycleUnscoped(
           // #4102: `once` bypasses the cycle.propose_takes.enabled off switch
           // for `gbrain dream --phase propose_takes --once` (same semantics as
           // conversation_facts_backfill / enrich_thin above).
-          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, {
-            dryRun,
-            repoPath: brainDir ?? undefined,
-            deadlineAtMs: opts.deadlineAtMs ?? null,
-            once: opts.onceForPhase === 'propose_takes',
-            includeSlugs: opts.proposeInclude,
-            excludeSlugs: opts.proposeExclude,
-            pageLimit: opts.proposeLimit,
-          }) as Promise<PhaseResult>, 'propose_takes');
+          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { dryRun, repoPath: brainDir ?? undefined, deadlineAtMs: opts.deadlineAtMs ?? null, once: opts.onceForPhase === 'propose_takes', includeSlugs: opts.proposeInclude, excludeSlugs: opts.proposeExclude, pageLimit: opts.proposeLimit }) as Promise<PhaseResult>, 'propose_takes');
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();
