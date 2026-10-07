@@ -92,3 +92,4 @@ link it here rather than raising the cap.
 | [Ambient capture consent gate](key-files/ambient-capture.md) | `memory.auto_writeback` capture lanes |
 | [Belief ledger](key-files/belief-ledger.md) | `src/core/belief/`, `gbrain beliefs`, doctor coverage |
 | [Quarantine](key-files/quarantine.md) | Gate-marker strip; quarantined pages in facts, reads, writes |
+| [Fork: source write policy + post-write enrichment](key-files/fork-write-policy.md) | `src/core/write-policy/`, `src/core/ops/write-contract.ts`, `src/core/post-write-enrichment*.ts` (fork-owned) |

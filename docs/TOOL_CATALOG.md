@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 161 tools across 25 areas. **Starter** marks membership in the ~40-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 163 tools across 25 areas. **Starter** marks membership in the ~40-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -184,6 +184,7 @@ Every non-localOnly operation on the MCP surface: 161 tools across 25 areas. **S
 | `get_page_upload` | An upload's state and next_part, to resume after a lost reply. | write |  |  |
 | `get_raw_data` | Retrieve raw data for a page. | read |  |  |
 | `get_versions` | Page version history, newest snapshot first: metadata only (id, snapshot_at, title, type, tags, frontmatter) for the newest 20 versions by default. | read |  |  |
+| `get_write_contract` | Return the page-write contract for a source: which frontmatter fields you must supply, which ones the server fills or preserves, which page types each directory accepts, the connection-id rules, and a copy-pasteable template. | read |  |  |
 | `get_write_request` | Your write's receipt by request_id (after write_pending or a lost reply). | write | yes |  |
 | `list_page_purges` | Owner-only (`gbrain pages purges list`). | admin |  |  |
 | `list_pages` | List pages by type, slug_prefix, frontmatter where; what did I touch this week: sort=updated_desc. | read | yes |  |
@@ -197,6 +198,7 @@ Every non-localOnly operation on the MCP surface: 161 tools across 25 areas. **S
 | `revert_version` | Restore a page to an earlier version from its history (a new revision; history is kept). | write |  |  |
 | `unpurge_page` | Owner-only (`gbrain pages unpurge <slug>`). | admin |  |  |
 | `upload_page_part` | Send the next part of an upload: part equals next_part, the whole call within part_max_frame_bytes, cut between code points. | write |  |  |
+| `validate_page` | Preflight a put_page payload against the source write contract WITHOUT writing anything. | read |  |  |
 
 ## questions
 

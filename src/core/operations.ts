@@ -147,8 +147,7 @@ export const operations: Operation[] = [
   // Page CRUD (get_page, put_page, delete_page, list_pages + the v0.26.5
   // destructive-guard ops restore_page, purge_deleted_pages) — ops/pages.ts
   ...pagesOperations, ...pageEditOperations, ...pageAppendOperations, ...pageBatchOperations, ...pageUploadOperations,
-  ...persistenceOperations,
-  ...writeContractOperations, // Fork: get_write_contract, validate_page
+  ...persistenceOperations, ...writeContractOperations, // Fork: get_write_contract, validate_page
   // Search (search, query) — ops/search.ts; search_exact — ops/search-exact.ts
   ...searchOperations, ...searchExactOperations,
   ...feedbackOperations,

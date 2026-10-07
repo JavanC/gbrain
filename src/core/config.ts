@@ -1464,7 +1464,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // #4152: preferred triage-model key (explicit pre-read in loadSynthConfig;
   // wins over models.dream.synthesize_verdict + dream.synthesize.verdict_model).
   'models.dream.triage',
-  'models.dream.propose_takes',
+  'models.dream.propose_takes', // Fork: propose_takes phase model
   'models.drift',
   'models.auto_think',
   'models.standing_questions',
@@ -1668,9 +1668,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Misc
   'artifacts_sync_mode',
   'cross_project_learnings',
-  // Remote put_page post-write enrichment. Opt-in because it requires a
-  // persistent Minions worker to consume the durable queue.
-  'writer.async_enrichment',
+  'writer.async_enrichment', // Fork: opt-in remote put_page post-write enrichment (needs a Minions worker)
   // Link resolution (issue #972; cross_source is issue #2589)
   'link_resolution',
   'link_resolution.global_basename',

@@ -11,7 +11,6 @@ import type { MinionHandler } from '../core/minions/types.ts';
 import { makeAutopilotCycleHandler } from '../core/minions/handlers/autopilot-cycle.ts';
 import { makeAutopilotGlobalMaintenanceHandler } from '../core/minions/handlers/autopilot-global-maintenance.ts';
 import { makeBacklinksHandler } from '../core/minions/handlers/backlinks.ts';
-import { makePostWriteEnrichmentHandler } from '../core/post-write-enrichment.ts'; // Fork
 import { makeChronicleExtractHandler } from '../core/minions/handlers/chronicle-extract.ts';
 import { makeCyclePhaseHandler } from '../core/minions/handlers/cycle-phase.ts';
 import { makeEmbedCatchUpHandler } from '../core/minions/handlers/embed-catch-up.ts';
@@ -548,7 +547,7 @@ export async function registerBuiltinHandlers(
   worker.register('import', makeImportHandler(engine));
   worker.register('extract', makeExtractHandler(engine));
   worker.register('backlinks', makeBacklinksHandler(engine));
-  worker.register('post-write-enrichment', makePostWriteEnrichmentHandler(engine)); // Fork: remote put_page link/timeline
+  worker.register('post-write-enrichment', (await import('../core/post-write-enrichment.ts')).makePostWriteEnrichmentHandler(engine)); // Fork: remote put_page link enrichment
   registerBuiltinJob(worker, engine, 'facts-absorb', withFactsAbsorbHaltCooldown(makeFactsAbsorbHandler(engine)));
 
   // v0.40.3.0: per-page contextual retrieval re-embed handler. PROTECTED
