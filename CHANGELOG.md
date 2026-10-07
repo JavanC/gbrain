@@ -10,6 +10,34 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.360.1] - 2026-10-22
+
+**Fork patchset rebased onto upstream v0.60.360.0.** Candidate build: see
+`REBASE-REPORT.md` for what was replayed, what needed judgment, and what was
+not verified.
+
+### Re-homed onto upstream
+
+- **The write-policy gate sits behind upstream's pre-admission cache.**
+  Upstream now prepares a page write under a cached engine and, when the
+  cache could explain a refusal, prepares it once more uncached. The gate
+  refuses on either pass, and an accepted write still reports the
+  `policy` it satisfied whichever pass admitted it.
+- **Post-write enrichment follows upstream's budgeted sweep pass.** The
+  link/timeline pass now takes the remaining budget and a log sink; the job
+  passes both.
+- **The body-language rule shares upstream's one-pass CJK counter**, so the
+  gate and the chunker still agree on what "CJK-heavy" means.
+- **propose_takes slug scoping** widens upstream's new type-narrowed,
+  failure-ordered candidate list instead of the old loader.
+- **`gbrain takes propose --apply-review`** sits alongside upstream's new
+  `--failed` / `--retry-failed` subcommands.
+
+### To take advantage of v0.60.360.1
+
+No action required. Sources with no `write_policy:` block behave exactly as
+before.
+
 ## [0.60.360.0] - 2026-10-22
 
 **Search and query notices now describe the query you ran instead of repeating brain-wide state on every call, startup prints one upgrade line, and `gbrain get` can return a single section, the paragraphs matching a term, or a line or byte range.** Before this release, every search on a brain with pending projections or held files carried the same brain-wide notice whether or not those items could affect the answer, two banners printed the same upgrade line, and an agent reading part of a large page had to fetch it whole and cut it down itself.
@@ -7001,6 +7029,62 @@ For contributors and agents working on gbrain:
 
 `gbrain upgrade` installs the binary. There are no schema migrations.
 
+## [0.60.102.1] - 2026-10-07
+
+**Fork patchset rebased onto upstream v0.60.102.0.**
+
+Twenty-two fork commits went in: seventeen landed as replays, two test fixes
+were already folded into earlier replays, one patch retired (below), one
+ratchet commit became empty (upstream retired the map it edited), and the old
+release commit was split (its write-contract ops module moved into the
+write-policy commit). Three follow-up commits re-home the
+fork onto upstream seams that moved between v0.51 and v0.60.
+
+### Re-homed onto upstream
+
+- **The write-policy gate covers every agent write lane.** Upstream split
+  page admission into a shared prepare step used by `put_page`, `capture` and
+  each page of the new `put_pages` batch, and now also routes sync imports and
+  internal repairs through `put_page`. The gate runs in that shared step, but
+  only for payloads an agent submitted through an op: batching can no longer
+  sidestep the contract, and the repo's own files are still judged only by
+  the repo's lint. A refused batch page is reported as that page's refusal.
+- **An accepted write reports the contract it satisfied** (`policy`:
+  contract version, whether the server normalized the page, and warnings
+  such as an unresolved connection).
+- **The refusal's advice field is `suggestion`** (was `hint`), the field
+  name upstream's agent contract uses everywhere else.
+- **Post-write enrichment runs upstream's own sweep pass.** Upstream removed
+  the inline auto-link entry point the job used and now refuses raw timeline
+  inserts on managed brains. The job now calls the maintenance sweep's
+  link/timeline pass over the source's newest stale pages, so it inherits
+  upstream's endpoint resolution, managed-brain publication and stale-edge
+  reconciliation. Upstream already writes `## Timeline` rows inline for
+  remote writes; link edges are what the job adds on a `serve --http` host.
+- **No extra dependency.** The validator's frontmatter split uses js-yaml,
+  which upstream already ships, instead of a separate package.
+
+### Retired
+
+- **Source-scoped async timeline insert** — the sweep pass is source-scoped
+  by construction.
+
+### Kept, re-verified against v0.60.102.0
+
+- propose_takes phase model routing, fence-insensitive cache hash, slug
+  scoping, and the hex-first run id (upstream still truncates receipt run ids
+  to 8 characters and still prefixes `propose-`).
+- `gbrain takes propose --apply-review`, now passing upstream's new accept
+  target (config, validated `--dir`); refused rows are still reported, not
+  fatal.
+
+### To take advantage of v0.60.102.1
+
+No action required. Sources with no `write_policy:` block behave exactly as
+before. Agents that read the refusal's `hint` field should read `suggestion`.
+
+**Say to your agent:** *"check my brain's write contract"* — *"validate this page before writing it"*
+
 ## [0.60.102.0] - 2026-10-07
 
 **Broken facts and takes tables in your notes now get repaired by themselves.**
@@ -13536,6 +13620,39 @@ gbrain mcp expose --status
 
 **Say to your agent:** *"use my brain over mcp"* — the `remote-mcp` skill shows the plan, asks before installing Tailscale or a service, publishes, grants each client least-privilege access, installs the connection inside the client, and verifies. Nothing is published to the public internet unless you say `--funnel`. Real-tailnet, macOS app-bundle CLI and cloud-agent verification are documented as remaining manual checks in `docs/guides/remote-mcp.md`.
 
+## [0.51.0.1] - 2026-09-19
+
+**Fork patchset rebased onto upstream v0.51.0.0.**
+
+Upstream funnelled every page mutation (`put_page`, `capture`, `delete_page`,
+`takes_*`, `add_timeline_entry`) through a single durable, revision-safe
+submission path. The fork's two write-path features were re-homed onto it
+rather than replayed against the old inline handler:
+
+- The source write-policy gate now runs inside the shared mutation funnel,
+  after slug validation and the subagent/client fences but before a write is
+  admitted. A rejection still means nothing was written. Because the funnel
+  is shared, `capture` is covered by the same contract the fork previously
+  needed a separate patch for. The `put_page` dry-run branch previews the
+  same check, so a preview still surfaces the rejection a real write would.
+- Durable post-write enrichment for untrusted writes now hangs off the
+  funnel's success path. Upstream still skips inline link extraction for
+  remote writers and emits only a hint advisory, so the queue remains the
+  reason the graph compounds from agent writes.
+
+Both live in fork-owned modules (`src/core/write-policy/mutation-gate.ts`,
+`src/core/post-write-enrichment-submit.ts`) called from two small sites, so
+the fork's footprint inside upstream files that change often is an import
+rather than a block. This is the change that keeps the next rebase cheap.
+
+### To take advantage of v0.51.0.1
+
+No action required. Sources with no `write_policy:` block behave exactly as
+before. Brains that declare one get the same contract on `capture` that
+`put_page` already had.
+
+**Say to your agent:** *"check my brain's write contract"* — *"validate this page before writing it"*
+
 ## [0.51.0.0] - 2026-09-16
 
 **Concurrent edits now have durable outcomes, safe retries, and one coherent page revision.**
@@ -13990,6 +14107,56 @@ not claims established by repository tests.
   explicit intent and does not copy ambient credentials into configuration.
 - Fact withdrawals survive stale source reimport. Verification reconciles
   uncertain mutations and confirms cleanup through readback.
+
+## [0.48.5.1] - 2026-09-10
+
+Fork release: the Javan patchset replayed onto upstream `v0.48.5.0`. Sixteen
+commits, down from twenty-seven, because five patches retired into upstream.
+
+### Retired into upstream
+
+- **The GPT-5.5 recipe entry.** Upstream's `src/core/ai/recipes/openai.ts`
+  now lists `gpt-5.5` alongside `gpt-5.6` and `gpt-5.2`, and
+  `model-pricing.ts` carries the canonical price.
+- **The reflex/volunteer import-cycle fix.** Upstream independently landed
+  the same leaf module, `src/core/context/reflex-rationale.ts`, with both
+  sides importing it statically. Replaying the fork's version would have
+  REVERTED upstream's `openclaw` volunteer channel, which the fork's older
+  copy of `VOLUNTEER_CHANNELS` predates.
+- **`takes propose` listing when invoked bare.** Upstream's `cmdPropose`
+  lists the pending queue itself.
+- **The fork's take-proposal promotion path** (`takes proposals`, the
+  multi-id `--accept`/`--reject`, and their plan/apply machinery). Upstream's
+  `acceptProposal`/`rejectProposal` are the markdown-canonical queue-to-page
+  route; carrying a second writer that reached the same table with raw SQL
+  was strictly worse. Only the batching layer survives — see below.
+
+### Kept, with the reason re-verified rather than assumed
+
+- **The post-write enrichment queue.** Upstream's maintenance sweep now
+  reconciles removals and honors the watermark it stamps, closing two of the
+  three reasons this patch existed. The third is unchanged: the sweep's
+  automatic trigger is armed on the stdio `serve` path, and `serve --http`
+  returns before that arming. A host whose MCP surface is HTTP never sweeps,
+  so remote writes would never have their links reconciled.
+- **The source write policy.** Still nothing equivalent upstream.
+- **Phase-local model routing and slug scoping for `propose_takes`.**
+
+### Changed
+
+- **`gbrain takes propose --apply-review <file.json>`** applies a whole
+  reviewed batch in one pass, calling upstream's accept/reject core per row.
+  A per-row failure is reported, never fatal, and the command exits 1 if any
+  row failed. `--dry-run` previews against the live pending queue.
+
+### Fixed
+
+- The fork's `post-write-enrichment` unit test gave its source a
+  `local_path` that does not exist. Upstream 0.48.x resolves that to
+  `repo_not_found` rather than the by-design DB-only `no_repo_configured`,
+  so put_page's storage_error guard fired. The test now creates a real temp
+  directory, matching the fix its Postgres sibling already carried, and
+  stops pinning the exact shape of the remote-skip payload.
 
 ## [0.48.5.0] - 2026-09-07
 
