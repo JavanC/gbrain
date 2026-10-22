@@ -13,6 +13,7 @@
     "import",
     "extract",
     "backlinks",
+    "post-write-enrichment",
     "facts-absorb",
     "contextual_reindex_per_chunk",
     "autopilot-cycle",
