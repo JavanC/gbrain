@@ -10,7 +10,7 @@
 
 ## 2. Fork patch 清單
 
-23 個 fork commit 全部處理,0 個退役、0 個略過。另新增 1 個修正 commit(`59f736366`)。
+23 個 fork commit 全部處理,0 個退役、0 個略過。另新增 4 個 `fix` commit:`59f736366`(policy 回報 ctx key)、`1f7a89d33`(上游較新的 verify gate)、`51973a38e`(上游新 contract 表 / golden)、`e2bbe380c`(被拒絕的寫入不算 funnel save)。
 
 | fork commit | 新 commit | 結果 |
 |---|---|---|
@@ -199,10 +199,23 @@ MISSING	templates/bootstrap/template-repo/README.md	1	<!-- gbrain-template-stamp
 - 單行程 run 的 222 個失敗,在每檔獨立行程下除上述 12 個外全部消失 → 是單一 `bun test` 行程內跨檔共享狀態的污染(上游自己的 fast loop 本來就分片跑),不是 fork 造成。但**沒有在乾淨上游上跑同樣的單行程 run**(時間不夠),所以這個說法沒有對照組。
 - 上一代參考數字(對 0.60.102):fork 112 / 乾淨上游 114、fork 獨有 0。本次數字口徑不同(85 個檔的子集),不能直接比較。
 
-### 完整單元套件對照(補跑,進行中)
-- 單行程 `bun test` 再試一次仍在背景 2 小時上限被砍(fork,187 個 `(fail)` 時截斷),放棄此口徑。
-- `GBRAIN_TEST_SHARD_TIMEOUT=3600 bun run test`:fork 4 個 shard 全部在 3600s 被砍(exit 124 / WEDGED),砍前 0–21 秒內都還有進度 → 4 核沙箱跑不完,不是卡死。作廢。
-- 進行中:`unset DATABASE_URL; GBRAIN_TEST_SHARD_TIMEOUT=14400 bun run test`,fork(`edd9a6de4`)跑完再跑乾淨上游 `ea5ac03fe`,序列、不並行。
+### 完整單元套件對照(補跑)— **放棄,環境跑不完**
+
+四次嘗試全部被環境上限砍掉,沒有一次產出完整套件的對照數字:
+
+| # | 做法 | 結果 |
+|---|---|---|
+| 1 | `unset DATABASE_URL; bun test`(單行程全檔) | 背景 2 小時上限被砍,無 EXIT;截斷前累計 187 個 `(fail)` |
+| 2 | `GBRAIN_TEST_SHARD_TIMEOUT=3600 bun run test` | 4 個 shard **全部** `exit=124` / `WEDGED`;砍前 0–21 秒內都還有進度 → 是跑不完,不是卡死 |
+| 3 | `SHARD_TIMEOUT=14400` | 起跑後發現自己在過期 commit 上(分支同時被推了 `51973a38e` 等),自行中止重啟 |
+| 4 | `SHARD_TIMEOUT=14400`,在當時 tip | 跑約 20 分鐘後 run 撞 five_hour rate limit 中止(`is_error=true`,turns=52,duration=13434s) |
+
+**結論:這個 4 核雲端沙箱跑不完本套件,不要再試第五次。** 完整套件要在 Mac mini 上跑
+(SOP 實測約 29 分鐘),開 worktree、帶 `GBRAIN_TEST_SHARD_TIMEOUT=3600`,且**不要切
+`~/gbrain` 的分支**(那個 checkout 是 `bun link` 生產環境)。
+
+歸因結論仍然成立,因為它不依賴完整套件:第 5 節上半的逐檔對照已證明 **fork 獨有失敗 = 0**
+(85 個有失敗的檔,每檔獨立行程,兩邊各跑一次)。完整套件只會補上「總數」,不會改變歸因。
 
 ## 6. 沒驗到什麼 / 待人判斷
 
@@ -215,15 +228,32 @@ MISSING	templates/bootstrap/template-repo/README.md	1	<!-- gbrain-template-stamp
 - 沒有部署、沒有對真實 brain 跑過 dream / takes / put_page。
 - Contract goldens(`bun run regen:all --goldens`)沒有重產;若 fork 的 op 影響這些 golden,只會在對應測試失敗時顯現(見第 5 節)。
 
-### 待人判斷
-0. **`get_write_contract` 的 read-trust 類別**:它只回傳 repo `gbrain.yml` 裡的政策,不回儲存的記憶文字,大概可以是 `text_free`(對有 trust floor 的連線放寬)。目前保守登錄為 `labeled`(與未登錄時相同)。`validate_page` 會讀既有頁的 frontmatter,保持 `labeled`。
-1. **put_page 被 policy 拒絕時仍記一次 `save` funnel event**:上游的 `funnelPassThrough('save')` 套在 `submitPageMutation` 的結果上,而 fork 的拒絕是 resolve 成 `{error, written:false}` response 而非 throw。是否要在拒絕時跳過 funnel 計數,需要決定。
-2. **fork 的 key-files 頁搬出 `key-files/`**:上游 `KEY_FILES.md` 在 v0.60.360.0 已是 9983/10000 bytes,且 `test/docs-navigation.test.ts` 要求每個 `key-files/*.md` 都在索引中出現,所以無法再加路由列。目前搬到 `docs/architecture/fork-write-policy.md`、由 fork 自有的 guide 連結。替代方案是壓縮某條上游列騰出空間(會增加 rebase 衝突面)。
-3. **page-body-readers 新增一列 `NONE`**:上游 ratchet 規定「新 reader 不給 row」,但 `NONE` 的定義是「這個名字不是 page body」。validate.ts 讀的是 agent 送進來的 payload 字串(必為 inline),不是儲存的 page row,所以用 NONE + 註記。是否接受此解釋需要判斷。
-4. **post-write-enrichment 的 `log` 接到 `console.error`**:sweep 本身預設是 no-op;選 stderr 是為了在 worker log 看得到 per-page 拒絕。
-5. **verify 的 typecheck 在預設 120s 上限下逾時**(4 核沙箱);400s 下全綠。CI 機器上是否會逾時未知。
+### 待人判斷 — **2026-10-22 已由 Javan 裁決**
+
+0. **`get_write_contract` / `validate_page` 的 read-trust 類別** → **維持 `labeled`**。
+   改成 `text_free` 是放寬存取,而目前沒有連線因此被擋(沒有實際需求);`labeled` 等於未登錄時的
+   執行期預設,維持它表示這次 rebase 對行為零影響。若日後有 thin client 讀不到契約,帶當時的
+   錯誤訊息再改。
+1. **`put_page` 被 policy 拒絕時仍記一次 `save` funnel event** → **已修**(`e2bbe380c`)。
+   上游 ratchet 自己的註記是「a **committed** put_page records a save」
+   (`scripts/module-size-limits.tsv` D8 funnel 列),所以這是回到上游語意,不是新增 fork 行為。
+   `funnelSaveUnlessRefused` 放在 fork 自有的 `write-policy/mutation-gate.ts`,上游
+   `ops/pages.ts` 的足跡仍是一行呼叫(淨 −1 行)。測試可鑑別:舊行為下失敗
+   (`Expected - 0 / Received + 1`),修正後 25 pass / 0 fail;`bun run typecheck` EXIT=0。
+   同檔另有 2 個失敗(`funnel-cli.test.ts`)經 stash 對照確認為 **pre-existing**。
+2. **fork 的 key-files 頁搬出 `key-files/`** → **維持搬出**。壓縮上游列會增加每次 rebase 的
+   衝突面,而 fork 自有頁的全部價值就是「上游 rebase 永不在它上面衝突」。
+3. **`page-body-readers` 新增一列 `NONE`** → **接受此解釋**。`validate.ts` 讀的是 agent 送進來的
+   payload 字串(必為 inline),不是儲存的 page row,所以不會遇到 segmented page 的
+   `page_body_segmented`;註記已寫在該列。
+4. **post-write-enrichment 的 `log` 接 `console.error`** → **接受**。stdout 留給資料是專案慣例,
+   診斷走 stderr。代價是非結構化,將來要統計拒絕率得自己 parse log(目前無此需求)。
+5. **verify 的 typecheck 在預設 120s 上限下逾時** → **不處理,降為已知環境事實**。這個 fork
+   用分支交付、不開 PR、沒有 CI(`origin/master` 停在 0.37.8.0 且早已分岔),所以「CI 會不會
+   逾時」是空問題;本機跑 verify 不會遇到,那是 4 核沙箱的時間問題。
 
 ## 進度
-- 已重放:23/23(全部已 push)+ 3 個 `fix(rebase-v0.60.360)` 修正 commit:`59f736366`(policy 回報 ctx key)、`1f7a89d33`(verify 新 gate)、`51973a38e`(新 contract 表 / golden)。
+- 已重放:23/23(全部已 push)+ 4 個 `fix` commit:`59f736366`(policy 回報 ctx key)、`1f7a89d33`(verify 新 gate)、`51973a38e`(新 contract 表 / golden)、`e2bbe380c`(拒絕不算 funnel save,2026-10-22 裁決後補)。
+- 第 6 節六個待判斷項**已全部裁決**(見該節)。完整套件對照**放棄**(雲端環境跑不完,見第 5 節),歸因結論不受影響。
 - 未處理:無。
 - 分支:`javan/rebase-v0.60.360`,版本 `0.60.360.1`,基於 `v0.60.360.0`。未開 PR、未部署、未動 `master` / `javan/rebase-v0.60`。
