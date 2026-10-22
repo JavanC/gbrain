@@ -54,10 +54,127 @@
 - e90e765c8(release):不直接重放,改為新 release commit 0.60.360.1。15 個版本檔衝突全為版本字串;以上游為底重寫戳記並用 generate-plugin-tree / generate-template-repo 重產;CHANGELOG 以上游為底,fork 三個舊條目(0.60.102.1 / 0.51.0.1 / 0.48.5.1)插在原錨點前,另加 0.60.360.1 條目。check-bootstrap-tag / check-plugin-tree / check-bootstrap-templates 通過。
 
 ## 3. 整檔移除稽核
-(待做)
+
+方法:對每個改動檔,把 `git diff -U0` 的移除行與新增行各做成 Counter 再相減(搬移的行互相抵消),剩下的是真的消失的行。
+- **正向**(`v0.60.360.0..HEAD`):上游行在新分支消失。若同一行在 fork 自己的 `merge-base..javan/rebase-v0.60` 也被淨移除 → `INTENT`,否則 `SUSPECT` 逐一人工判斷。
+- **反向**(`merge-base..javan/rebase-v0.60` 的 fork 淨新增行):逐行確認在 HEAD 該檔仍存在(含重數)。
+
+結果:正向 20 INTENT / 31 SUSPECT,反向 38 MISSING。**逐項判斷後無疑似誤刪。**
+
+| 類別 | 項目 | 判斷 |
+|---|---|---|
+| 版本戳記 | VERSION、package.json、openclaw / .codex / .claude plugin.json(含 variants)、BOOTSTRAP 戳記、plugin tree / template 戳記(正向 0.60.360.0、反向 0.60.102.1) | 刻意:改為 0.60.360.1 |
+| generated | TOOL_CATALOG 總數行(161→163)、plugin/README op 數(182→184)、cli-flag-registry 的 dream / takes 列 | 刻意:由生成器重產,內容包含 fork 的新 flag/op |
+| ratchet 列 | module-size-limits.tsv(jobs/operations/config/ops/pages)、function-size-baseline.tsv(ProposeTakesPhase.process) | 刻意:取上游列後依實測調高並附 fork 註記;fork 舊列(cycle.ts 3265 等)是對 v0.60.102 的數字,已作廢 |
+| 被 fork 版本取代的上游行 | ops/pages.ts `submitPageMutation(... put_page ...)`、propose-takes.ts `listCandidatePages(..., pageLimit, ...)`、page-mutations.ts 的 submit/prepare 型別行、prepare 呼叫行、兩條 prior return 行 | 刻意:每行都有對應的「上游行 + fork 參數/包裝」新行(已人工逐行比對) |
+| fork 行在新架構下改寫 | cjk.ts 的 cjkRatio 舊實作 8 行;propose-takes 的 `scopedFetchLimit` 呼叫行;pages.ts / page-mutations.ts 的 fork 舊行 | 刻意:語意已移植到上游新結構(cjkRatio 改用 wordStats;`withWritePolicyReport(ctx` → `(preparedCtx`,見修正 commit 59f736366) |
+| INTENT(20 行) | takes.ts 兩個 import、propose-takes 的 run id / modelId / modelHint / contentHash 舊行、sweep.ts 兩個 export 化、operations.ts、page-batch.ts 等 | 刻意:fork 在舊分支同樣淨移除 |
+
+<details><summary>原始輸出</summary>
+
+```
+# FORWARD (tag..HEAD net-removed lines)
+SUSPECT	.claude-plugin/plugin.json	1	  "version": "0.60.360.0",
+SUSPECT	.codex-plugin/plugin.json	1	  "version": "0.60.360.0",
+SUSPECT	BOOTSTRAP_FOR_AGENTS.md	1	<!-- gbrain-runbook-stamp: 0.60.360.0 -->
+SUSPECT	VERSION	1	0.60.360.0
+SUSPECT	docs/TOOL_CATALOG.md	1	Every non-localOnly operation on the MCP surface: 161 tools across 25 areas. **Starter** marks membership in the ~40-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that mus
+SUSPECT	openclaw.plugin.json	1	  "version": "0.60.360.0",
+SUSPECT	package.json	1	  "version": "0.60.360.0",
+SUSPECT	plugin-variants/gbrain-coding/.claude-plugin/plugin.json	1	  "version": "0.60.360.0",
+SUSPECT	plugin-variants/gbrain-coding/.codex-plugin/plugin.json	1	  "version": "0.60.360.0",
+SUSPECT	plugin-variants/gbrain-coding/README.md	1	<!-- gbrain-plugin-tree-stamp: 0.60.360.0 -->
+SUSPECT	plugin-variants/gbrain-daily/.claude-plugin/plugin.json	1	  "version": "0.60.360.0",
+SUSPECT	plugin-variants/gbrain-daily/.codex-plugin/plugin.json	1	  "version": "0.60.360.0",
+SUSPECT	plugin-variants/gbrain-daily/README.md	1	<!-- gbrain-plugin-tree-stamp: 0.60.360.0 -->
+SUSPECT	plugin/README.md	1	<!-- gbrain-plugin-tree-stamp: 0.60.360.0 -->
+SUSPECT	plugin/README.md	1	The plugin's MCP server runs `gbrain serve --surface full` — 182
+SUSPECT	scripts/function-size-baseline.tsv	1	src/core/cycle/propose-takes.ts	ProposeTakesPhase.process	430	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +2 #5958 (issue #5874): call_timeout_ms read and its per-p
+SUSPECT	scripts/module-size-limits.tsv	1	src/commands/jobs.ts	687	ratchet	refactor wave 1 split target (W4 jobs, cut line); ceiling rationale: docs/architecture/key-files/commands-4.md entry for src/commands/jobs.ts; help lines: authorize-le
+SUSPECT	scripts/module-size-limits.tsv	1	src/core/operations.ts	244	ratchet	+1 #7168: graphRankOperations import (ops/graph-rank.ts; spread shares the orphans line); peel target: containment sprint C4-C7; grown v0.46.26.0 megawave op wiring;
+SUSPECT	scripts/module-size-limits.tsv	1	src/core/config.ts	2003	ratchet	+2 W5: search.page_rank_cut / page_rank_cut_factor KNOWN_CONFIG_KEYS rows (read in search/page-rank-cut.ts); +3 W3 confidence-gated reranking: search.reranker.gate / ga
+SUSPECT	scripts/module-size-limits.tsv	1	src/core/ops/pages.ts	727	ratchet	crossed the unlisted 1500 cap in the fix wave: pack-vocabulary enforcement on capture (#4721) + get_page alias follow (#4275) landed together; next growth should peel
+INTENT	src/commands/takes.ts	1	import { existsSync } from 'node:fs';
+INTENT	src/commands/takes.ts	1	import type { BrainEngine } from '../core/engine.ts';
+SUSPECT	src/core/cli-flag-registry.generated.ts	1	  'dream': ['--audit-rejects', '--brain', '--cancel-unmatched', '--date', '--dir', '--drain', '--dry-run', '--eval-run', '--force', '--from', '--help', '--input', '--install', '--json', '--limit', '--
+SUSPECT	src/core/cli-flag-registry.generated.ts	1	  'takes': ['--about', '--accept', '--applied', '--apply', '--batch-size', '--before', '--brain', '--bucket-size', '--by', '--claim', '--date', '--dim', '--dir', '--domain', '--dry-run', '--embedding-
+INTENT	src/core/cycle.ts	1	          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { dryRun, repoPath: brainDir ?? undefined, deadlineAtMs: opts.deadlineAtMs ?? null, once: opts.once
+INTENT	src/core/cycle/propose-takes.ts	1	  /** Skip pages that already have a complete takes fence. Default: true. */
+INTENT	src/core/cycle/propose-takes.ts	1	 * Compute the content_hash key for the idempotency cache. SHA-256 of the
+INTENT	src/core/cycle/propose-takes.ts	1	 * page body suffices — page slug + prompt_version are separate columns in
+INTENT	src/core/cycle/propose-takes.ts	1	 * the composite unique index.
+INTENT	src/core/cycle/propose-takes.ts	1	  return createHash('sha256').update(pageBody).digest('hex');
+INTENT	src/core/cycle/propose-takes.ts	1	    const proposalRunId = `propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${randomUUID().slice(0, 8)}`;
+INTENT	src/core/cycle/propose-takes.ts	1	    const modelId = opts.model ?? getChatModel();
+INTENT	src/core/cycle/propose-takes.ts	1	      tombstones_written: 0,
+SUSPECT	src/core/cycle/propose-takes.ts	1	    const listed = await listCandidatePages(engine, scope, pageLimit, await proposeTakesTypes(engine));
+INTENT	src/core/cycle/propose-takes.ts	1	          modelHint: opts.model,
+INTENT	src/core/operations.ts	1	  ...persistenceOperations,
+INTENT	src/core/ops/pages.ts	1	      return { dry_run: true, action: 'put_page', slug: p.slug };
+SUSPECT	src/core/ops/pages.ts	1	    return submitPageMutation(ctx, { operation: 'put_page', params: p }).then(funnelPassThrough('save')).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error));
+INTENT	src/core/ops/pages.ts	1	    return submitPageMutation(ctx, { operation: 'capture', params: p });
+INTENT	src/core/persistence/page-batch.ts	1	      prepared[index] = await preparePageAdmission(ctx, { operation: 'put_page', params,
+SUSPECT	src/core/persistence/page-mutations.ts	1	  input: { operation: string; params: Record<string, unknown>; waitMs?: number; managedFileImport?: true; timelineSection?: TimelineSection; databaseOnly?: 'overwrite_restore' | 'detached';
+SUSPECT	src/core/persistence/page-mutations.ts	1	  let prepared = await preparePageAdmission(cached ? { ...ctx, engine: cached } : ctx, { ...input, params });
+SUSPECT	src/core/persistence/page-mutations.ts	1	  if (prepared.prior) return withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs())), false));
+SUSPECT	src/core/persistence/page-mutations.ts	1	    prepared = await preparePageAdmission(ctx, { ...input, params: { ...params, request_id: prepared.admission.requestId } });
+SUSPECT	src/core/persistence/page-mutations.ts	1	    if (prepared.prior) return withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs())), false));
+INTENT	src/core/persistence/page-mutations.ts	1	  return { ...response, ...(prepared.typeWarning ? { type_warning: prepared.typeWarning } : {}), ...(prepared.slugAdvisory ? { slug_advisory: prepared.slugAdvisory } : {}) };
+SUSPECT	src/core/persistence/page-mutations.ts	1	    databaseOnly?: 'overwrite_restore' | 'detached'; stagedBody?: true }
+INTENT	src/core/sweep.ts	1	interface PassCtx {
+INTENT	src/core/sweep.ts	1	async function runLinksTimelinePass(
+SUSPECT	templates/bootstrap/template-repo/README.md	1	<!-- gbrain-template-stamp: 0.60.360.0 -->
+INTENT	test/propose-takes.test.ts	1	    expect((runIdA as string).startsWith('propose-')).toBe(true);
+# REVERSE (MB..fork net-added lines missing from HEAD)
+MISSING	.claude-plugin/plugin.json	1	  "version": "0.60.102.1",
+MISSING	.codex-plugin/plugin.json	1	  "version": "0.60.102.1",
+MISSING	BOOTSTRAP_FOR_AGENTS.md	1	<!-- gbrain-runbook-stamp: 0.60.102.1 -->
+MISSING	VERSION	1	0.60.102.1
+MISSING	docs/TOOL_CATALOG.md	1	Every non-localOnly operation on the MCP surface: 142 tools across 23 areas. **Starter** marks membership in the ~40-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that mus
+MISSING	openclaw.plugin.json	1	  "version": "0.60.102.1",
+MISSING	package.json	1	  "version": "0.60.102.1",
+MISSING	plugin-variants/gbrain-coding/.claude-plugin/plugin.json	1	  "version": "0.60.102.1",
+MISSING	plugin-variants/gbrain-coding/.codex-plugin/plugin.json	1	  "version": "0.60.102.1",
+MISSING	plugin-variants/gbrain-coding/README.md	1	<!-- gbrain-plugin-tree-stamp: 0.60.102.1 -->
+MISSING	plugin-variants/gbrain-daily/.claude-plugin/plugin.json	1	  "version": "0.60.102.1",
+MISSING	plugin-variants/gbrain-daily/.codex-plugin/plugin.json	1	  "version": "0.60.102.1",
+MISSING	plugin-variants/gbrain-daily/README.md	1	<!-- gbrain-plugin-tree-stamp: 0.60.102.1 -->
+MISSING	plugin/README.md	1	<!-- gbrain-plugin-tree-stamp: 0.60.102.1 -->
+MISSING	scripts/function-size-baseline.tsv	1	src/core/cycle/propose-takes.ts	ProposeTakesPhase.process	431	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +2 #5958 (issue #5874): call_timeout_ms read and its per-p
+MISSING	scripts/module-size-limits.tsv	1	src/commands/jobs.ts	667	ratchet	refactor wave 1 split target (W4 jobs, cut line); ceiling rationale: docs/architecture/key-files/commands-4.md entry for src/commands/jobs.ts; help lines: authorize-le
+MISSING	scripts/module-size-limits.tsv	1	src/core/cycle.ts	3265	ratchet	+2 System One v1 S9: extract_facts phase tail runs the conflict sweep (ai/decide/sweep.ts) only when the slot is not off; +2 System One v1: purge phase prunes decision r
+MISSING	scripts/module-size-limits.tsv	1	src/core/operations.ts	341	ratchet	peel target: containment sprint C4-C7; grown v0.46.26.0 megawave op wiring; +chat-connectors wiring (master merge); +5 v0.47 gmail-loops: loopsOperations spread + OP
+MISSING	scripts/module-size-limits.tsv	1	src/core/config.ts	1900	ratchet	+8 #5988: sync.holds/hold_cap/hold_escalate_count/hold_escalate_pct/parser_regression key registration (read by persistence/sync-holds.ts); +3 agent operator wave A4: G
+MISSING	scripts/module-size-limits.tsv	1	src/core/ops/pages.ts	674	ratchet	crossed the unlisted 1500 cap in the fix wave: pack-vocabulary enforcement on capture (#4721) + get_page alias follow (#4275) landed together; next growth should peel
+MISSING	src/core/cjk.ts	1	  return cjkRatio(s) >= CJK_DENSITY_THRESHOLD;
+MISSING	src/core/cjk.ts	1	 * CJK chars as a fraction of non-whitespace chars, 0 when there is no text.
+MISSING	src/core/cjk.ts	1	 * Extracted so `isCJKDominant` and the write-policy language rule share ONE
+MISSING	src/core/cjk.ts	1	 * implementation: a second copy would let the chunker's notion of "CJK-heavy"
+MISSING	src/core/cjk.ts	1	 * drift away from the gate's, and the gate would then reject pages the
+MISSING	src/core/cjk.ts	1	 * chunker treats as Latin (or the reverse).
+MISSING	src/core/cjk.ts	1	  if (nonWhitespace === 0) return 0;
+MISSING	src/core/cjk.ts	1	  return (cjkMatches ? cjkMatches.length : 0) / nonWhitespace;
+MISSING	src/core/cli-flag-registry.generated.ts	1	  'dream': ['--audit-rejects', '--brain', '--cancel-unmatched', '--date', '--dir', '--drain', '--dry-run', '--eval-run', '--force', '--from', '--help', '--input', '--install', '--json', '--limit', '--
+MISSING	src/core/cli-flag-registry.generated.ts	1	  'takes': ['--accept', '--apply-review', '--batch-size', '--before', '--brain', '--bucket-size', '--by', '--claim', '--dim', '--dir', '--domain', '--dry-run', '--embedding-dimensions', '--embedding-m
+MISSING	src/core/cycle/propose-takes.ts	1	    const pages = await listCandidatePages(engine, scope, scopedFetchLimit(opts, pageLimit)); // Fork: wider window under slug scoping
+MISSING	src/core/ops/pages.ts	1	    return submitPageMutation(ctx, { operation: 'put_page', params: p, writePolicy: true }).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error));
+MISSING	src/core/persistence/page-mutations.ts	1	  input: { operation: string; params: Record<string, unknown>; waitMs?: number; managedFileImport?: true; writePolicy?: true }): Promise<Record<string, unknown>> {
+MISSING	src/core/persistence/page-mutations.ts	1	  try { prepared = await preparePageAdmission(ctx, { ...input, params }); }
+MISSING	src/core/persistence/page-mutations.ts	1	    pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs())), true);
+MISSING	src/core/persistence/page-mutations.ts	1	  return withPostWriteEnrichment(ctx, input.operation, row, withWritePolicyReport(ctx, input.operation, // Fork: policy report + remote enrichment
+MISSING	src/core/persistence/page-mutations.ts	1	  input: { operation: string; params: Record<string, unknown>; managedFileImport?: true; batch?: PageBatchMember; writePolicy?: true }
+MISSING	templates/bootstrap/template-repo/README.md	1	<!-- gbrain-template-stamp: 0.60.102.1 -->
+```
+</details>
 
 ## 4. src/commands/takes.ts 逐檔比對
-(待做)
+
+- 上游 `merge-base..v0.60.360.0` 動過此檔的 commit 有 9 個:401c7c3cd(GBRA-130 A-25 失敗頁後排 / --failed / --retry-failed)、16948de68 / fae30e8d7 / 726d5f28d / 164feeb11(W7 forecast journal、takes journal、scorecard group_by、take horizons)、ae48f8b84 / d024e783f(W6 takes grades)、7833f7f40(embedding_query_prefix #3783)、fa39cccaa(rebuild 與 serve 共存 W9F item 8)。
+- 上游在此區間淨新增 238 行:**HEAD 中缺 0 行**。
+- 上游在此區間淨刪除的行:**在 HEAD 重新出現 0 行**(沒有把上游修正改回去)。
+- 目標 tag 的行在 HEAD 消失的只有 2 行,都是 import 被擴充:`existsSync` → `existsSync, readFileSync`、`BrainEngine` → `BrainEngine, TakeKind`。
+- `diff(merge-base..fork 對 takes.ts 的 +/- 行, v0.60.360.0..HEAD 對 takes.ts 的 +/- 行)` **完全相同**:fork 帶進的改動與上一代逐字一致(+201/-2),沒有多也沒有少。
+- 唯一衝突是 help 文字,兩邊並存(上游 `--failed` / `--retry-failed`、fork `--apply-review`);`--apply-review` 的 dispatch 位於上游 editFlags 檢查之後、`--accept` 分支之前。
 
 ## 5. 測試對照
 (待做)
