@@ -186,7 +186,18 @@ MISSING	templates/bootstrap/template-repo/README.md	1	<!-- gbrain-template-stamp
 ### 單元測試
 - 依指示執行 `bun test > /tmp/units.txt 2>&1`(單一行程、DATABASE_URL 未設定)。**跑了 2 小時仍未結束,被背景任務的時間上限(最大值)砍掉,沒有 exit code。** 被砍前到達 208 個測試檔,記錄到 85 個檔、222 個 `(fail)`。部分輸出保存在 `/tmp/claude-0/units-partial.txt`(沙箱內,不會保留)。
 - 因為完整套件在這個環境跑不完,歸因改用:把這 85 個有失敗的檔,**每檔獨立一個 bun test 行程**,在本分支與乾淨上游 `v0.60.360.0` worktree 上各跑一次,比較失敗數(結果見下)。這只覆蓋「單行程 run 中已出現失敗的檔」,不是完整套件。
-(對照組進行中)
+
+| 範圍 | fork(本分支,修正前 `1f7a89d33`) | 乾淨上游 `v0.60.360.0` | fork 獨有 |
+|---|---|---|---|
+| 85 個檔、每檔獨立行程 | 12 fail(4 檔) | 10 fail(2 檔) | 2 |
+
+- 兩邊都失敗(環境性,上游本身就失敗):`test/bootstrap-dispatcher.serial.test.ts` 8 個(兩邊失敗的 test 名稱逐一相同)、`test/cli-thin-client-refusal-matrix.test.ts` 2 個(golden 期望 `ECONNREFUSED:` 字樣,這個 bun 1.4.2 / 沙箱給的錯誤字串沒有)。
+- **fork 獨有 2 個,已修**(`51973a38e`):
+  - `test/eligibility-registry.test.ts`:上游新的 ENG-14 read-trust 表要求每個 read op 都登錄;`get_write_contract` / `validate_page` 登錄為 `labeled`(= 未登錄 op 的執行期預設,行為不變)。
+  - `test/cli-goldens.test.ts`:`--tools-json` golden 多出兩個 op 與 `bypass_policy`(刻意的變化,只對這個檔用 `GBRAIN_TEST_UPDATE_GOLDENS=1` 重產)。
+  - 修正後這兩個檔重跑:8/8、3/3 pass。修正後 fork 失敗數 = 10 = 乾淨上游。
+- 單行程 run 的 222 個失敗,在每檔獨立行程下除上述 12 個外全部消失 → 是單一 `bun test` 行程內跨檔共享狀態的污染(上游自己的 fast loop 本來就分片跑),不是 fork 造成。但**沒有在乾淨上游上跑同樣的單行程 run**(時間不夠),所以這個說法沒有對照組。
+- 上一代參考數字(對 0.60.102):fork 112 / 乾淨上游 114、fork 獨有 0。本次數字口徑不同(85 個檔的子集),不能直接比較。
 
 ## 6. 沒驗到什麼 / 待人判斷
 
@@ -195,10 +206,12 @@ MISSING	templates/bootstrap/template-repo/README.md	1	<!-- gbrain-template-stamp
 - **preadmit cache 路徑沒有測試覆蓋**:`59f736366` 修的是只在 Postgres + `persistence.preadmit_cache` 開啟時才走的路徑(cached ctx 與 retry ctx)。修正是讀碼推論,沒有測試在該路徑上斷言 `policy` 回報存在,也沒驗證 policy refusal 在 retry 路徑的行為。
 - `post-write-enrichment` 在新的 `runLinksTimelinePass` 簽名下(budgetLeft / log)沒有實機跑過 worker;只有單元測試(PGLite)。
 - `--propose-include/-exclude/-limit` 與上游新增的「失敗頁後排 / 持有失敗頁」(GBRA-130 A-25)交互:沒有專門測試。上限計數只算 cache_hits + cache_misses,被上游 hold 的頁面是否計入沒有確認。
+- 完整單元套件(`bun test` 全部)沒有完成過,只驗了 85 個檔;其餘 `.serial` / `.slow` 與未到達的檔沒有獨立跑。
 - 沒有部署、沒有對真實 brain 跑過 dream / takes / put_page。
 - Contract goldens(`bun run regen:all --goldens`)沒有重產;若 fork 的 op 影響這些 golden,只會在對應測試失敗時顯現(見第 5 節)。
 
 ### 待人判斷
+0. **`get_write_contract` 的 read-trust 類別**:它只回傳 repo `gbrain.yml` 裡的政策,不回儲存的記憶文字,大概可以是 `text_free`(對有 trust floor 的連線放寬)。目前保守登錄為 `labeled`(與未登錄時相同)。`validate_page` 會讀既有頁的 frontmatter,保持 `labeled`。
 1. **put_page 被 policy 拒絕時仍記一次 `save` funnel event**:上游的 `funnelPassThrough('save')` 套在 `submitPageMutation` 的結果上,而 fork 的拒絕是 resolve 成 `{error, written:false}` response 而非 throw。是否要在拒絕時跳過 funnel 計數,需要決定。
 2. **fork 的 key-files 頁搬出 `key-files/`**:上游 `KEY_FILES.md` 在 v0.60.360.0 已是 9983/10000 bytes,且 `test/docs-navigation.test.ts` 要求每個 `key-files/*.md` 都在索引中出現,所以無法再加路由列。目前搬到 `docs/architecture/fork-write-policy.md`、由 fork 自有的 guide 連結。替代方案是壓縮某條上游列騰出空間(會增加 rebase 衝突面)。
 3. **page-body-readers 新增一列 `NONE`**:上游 ratchet 規定「新 reader 不給 row」,但 `NONE` 的定義是「這個名字不是 page body」。validate.ts 讀的是 agent 送進來的 payload 字串(必為 inline),不是儲存的 page row,所以用 NONE + 註記。是否接受此解釋需要判斷。
@@ -206,5 +219,6 @@ MISSING	templates/bootstrap/template-repo/README.md	1	<!-- gbrain-template-stamp
 5. **verify 的 typecheck 在預設 120s 上限下逾時**(4 核沙箱);400s 下全綠。CI 機器上是否會逾時未知。
 
 ## 進度
-- 已重放:23/23(加 1 個修正 commit)。全部已 push。
-- 未處理:無。稽核與測試進行中(第 3–6 節)。
+- 已重放:23/23(全部已 push)+ 3 個 `fix(rebase-v0.60.360)` 修正 commit:`59f736366`(policy 回報 ctx key)、`1f7a89d33`(verify 新 gate)、`51973a38e`(新 contract 表 / golden)。
+- 未處理:無。
+- 分支:`javan/rebase-v0.60.360`,版本 `0.60.360.1`,基於 `v0.60.360.0`。未開 PR、未部署、未動 `master` / `javan/rebase-v0.60`。
