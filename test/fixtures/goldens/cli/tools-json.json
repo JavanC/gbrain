@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 261997,
-    "stdoutSha256": "c8eb8149e1f40f0250f7d2f7f6772f2ac337fc0f137dc8f51a87e3116520eab8",
+    "stdoutBytes": 264115,
+    "stdoutSha256": "70a54d9f2b0b9d3e6039e2fe78c02563b4615b38f9555e3a94a02c160f19d457",
     "toolNames": [
       "remember",
       "entity",
@@ -29,6 +29,8 @@
       "list_write_requests",
       "list_write_conflicts",
       "cancel_write_request",
+      "get_write_contract",
+      "validate_page",
       "search",
       "query",
       "assemble_evidence",
@@ -606,6 +608,7 @@
         "parameters": {
           "allow_empty": "boolean?",
           "allow_shrink": "boolean?",
+          "bypass_policy": "boolean?",
           "content": "string",
           "content_origin": "string?",
           "drop_timeline": "boolean?",
@@ -628,6 +631,10 @@
             },
             "allow_shrink": {
               "description": "Allow content under half a >256 KB page. To add text use append_page, not a re-put; a page over one request goes by begin_page_upload.",
+              "type": "boolean"
+            },
+            "bypass_policy": {
+              "description": "Skip the source write-policy gate. LOCAL CLI ONLY — ignored for remote callers.",
               "type": "boolean"
             },
             "content": {
@@ -1598,6 +1605,58 @@
           "type": "object"
         },
         "scope": "write"
+      },
+      {
+        "description": "Return the page-write contract for a source: which frontmatter fields you must supply, which ones the server fills or preserves, which page types each directory accepts, the connection-id rules, and a copy-pasteable template. Call this ONCE before your first put_page to a source (and again when contract_version changes). Sources that declare no policy return enforced: false, meaning put_page accepts any well-formed markdown.",
+        "idempotent": false,
+        "local_only": false,
+        "mutating": false,
+        "name": "get_write_contract",
+        "parameters": {
+          "source_id": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "source_id": {
+              "description": "Source to describe. Defaults to the caller's own source; a source outside the caller's grant is refused.",
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "Preflight a put_page payload against the source write contract WITHOUT writing anything. Returns valid, machine-readable violations (each with a fix), and the normalized frontmatter the server would store. Same validator put_page runs, so a pass here means put_page will not reject the page.",
+        "idempotent": false,
+        "local_only": false,
+        "mutating": false,
+        "name": "validate_page",
+        "parameters": {
+          "content": "string",
+          "slug": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "content": {
+              "description": "Full markdown content with YAML frontmatter",
+              "type": "string"
+            },
+            "slug": {
+              "description": "Page slug the content would be written to",
+              "type": "string"
+            }
+          },
+          "required": [
+            "slug",
+            "content"
+          ],
+          "type": "object"
+        },
+        "scope": "read"
       },
       {
         "description": "Cheap hybrid search, no LLM expansion, top 20: exact tokens, names, field values. NOT proof of coverage; match: \"keyword\" pages every keyword match and takes OR across quoted names or codes (\"A\" OR \"B\" OR …): one call lists every page matching any. Name lists: entity names. Concepts/landscape or people/companies/projects by topic: `query`; lists: list_pages; personal: get_recent_salience. return_unit: sections or conversations. fields: \"full\" adds diagnostics.",

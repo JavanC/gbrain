@@ -41,6 +41,7 @@ export const OP_READ_TRUST: Readonly<Record<string, ReadTrustHandling>> = {
   find_experts: 'labeled', find_trajectory: 'labeled', takes_scorecard: 'labeled', takes_calibration: 'labeled',
   open_loops: 'labeled', schema_review_orphans: 'labeled',
   questions_list: 'labeled', questions_status: 'labeled',
+  get_write_contract: 'labeled', validate_page: 'labeled', // Fork: write-policy ops; labeled = the unlisted default, unchanged
   code_callers: 'labeled', code_callees: 'labeled', code_def: 'labeled', code_refs: 'labeled', code_blast: 'labeled', code_flow: 'labeled',
   // no stored memory text
   search_modes: 'text_free', list_link_sources: 'text_free', get_brain_identity: 'text_free',
