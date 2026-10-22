@@ -177,7 +177,14 @@ MISSING	templates/bootstrap/template-repo/README.md	1	<!-- gbrain-template-stamp
 - 唯一衝突是 help 文字,兩邊並存(上游 `--failed` / `--retry-failed`、fork `--apply-review`);`--apply-review` 的 dispatch 位於上游 editFlags 檢查之後、`--accept` 分支之前。
 
 ## 5. 測試對照
-(待做)
+
+### bun run verify
+- 第一次(預設每項 120s 上限):`EXIT=1`,`verify failed: 4/88` — `typecheck`(TIMED OUT after 120s)、`check:doc-history`(KEY_FILES.md 10183 > 10000 bytes)、`check:page-body-readers`(validate.ts:367)、`check:regen-all`(operation manifest stale)。
+- 修正 commit `1f7a89d33` 後第二次(預設):`EXIT=1`,`verify failed: 1/88`,`Failed: typecheck`(TIMED OUT after 120s)。
+- 第三次 `GBRAIN_VERIFY_TIMEOUT=400 bun run verify`:`EXIT=0`,`[verify-parallel] elapsed=196s | pass=88 fail=0 skip=0 | all checks green`(typecheck 182s)。typecheck 超時是 4 核沙箱的時間問題,不是型別錯誤;單獨跑 `bun run typecheck` 每次 rc=0。
+
+### 單元測試
+(進行中)
 
 ## 6. 沒驗到什麼
 (待做)
