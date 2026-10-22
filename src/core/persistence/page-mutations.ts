@@ -229,7 +229,9 @@ export async function submitPageMutation(ctx: OperationContext,
   // cache could explain drops it and prepares the write once more, uncached, so it ends as it would without it.
   const cached = await preadmitReads(ctx.engine);
   let prepared: Awaited<ReturnType<typeof preparePageAdmission>>;
-  try { prepared = await preparePageAdmission(cached ? { ...ctx, engine: cached } : ctx, { ...input, params }); }
+  // Fork: the write-policy report is keyed by the ctx object preparePageAdmission ran under; keep that object.
+  let preparedCtx: OperationContext = cached ? { ...ctx, engine: cached } : ctx;
+  try { prepared = await preparePageAdmission(preparedCtx, { ...input, params }); }
   catch (error) { return writePolicyRefusalResponse(error); } // Fork: a policy refusal is a response.
   if (prepared.prior) return withPostWriteEnrichment(ctx, input.operation, prepared.prior, // Fork: replay reports, never re-queues
       await withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs())), false)), true);
@@ -242,6 +244,7 @@ export async function submitPageMutation(ctx: OperationContext,
   catch (error) {
     if (!cached || !preadmitRecheckFailed(error)) throw error;
     dropPreadmitCache(ctx.engine);
+    preparedCtx = ctx;
     try { prepared = await preparePageAdmission(ctx, { ...input, params: { ...params, request_id: prepared.admission.requestId } }); }
     catch (retryError) { return writePolicyRefusalResponse(retryError); } // Fork: a policy refusal is a response.
     if (prepared.prior) return withPostWriteEnrichment(ctx, input.operation, prepared.prior, // Fork: replay reports, never re-queues
@@ -250,7 +253,7 @@ export async function submitPageMutation(ctx: OperationContext,
   }
   const response = await withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, row, ctx.config, waitMs())), false));
   emitFenceNotice(ctx, response, row.slug);
-  return withPostWriteEnrichment(ctx, input.operation, row, withWritePolicyReport(ctx, input.operation, // Fork: policy report + remote enrichment
+  return withPostWriteEnrichment(ctx, input.operation, row, withWritePolicyReport(preparedCtx, input.operation, // Fork: policy report + remote enrichment
     { ...response, ...(prepared.typeWarning ? { type_warning: prepared.typeWarning } : {}), ...(prepared.slugAdvisory ? { slug_advisory: prepared.slugAdvisory } : {}) }), false);
 }
 
