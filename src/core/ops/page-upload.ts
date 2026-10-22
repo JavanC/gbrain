@@ -385,7 +385,7 @@ const commit_page_upload: Operation = {
       if (ctx.remote !== false) await assertLargePageAdmission(ctx.engine, row.slug, row.source_id, params);
     }
     try {
-      return await submitPageMutation(ctx, { operation: 'put_page', params, stagedBody: true });
+      return await submitPageMutation(ctx, { operation: 'put_page', params, stagedBody: true, writePolicy: true }); // Fork, JAV-248: gate the staged page body.
     } catch (error) {
       if (row.mode === 'replace' && error instanceof OperationError && error.code === 'revision_conflict') throw revisionChanged(row.slug, row.source_id);
       throw error;

@@ -133,16 +133,29 @@ export class WritePolicyRefusal extends OperationError {
  */
 const passedReports = new WeakMap<object, PolicyReport>();
 
-/** Gate a prepared page intent in place: throws on refusal, applies normalized content on pass. */
+/**
+ * Gate a prepared page intent in place: throws on refusal, applies normalized
+ * content on pass.
+ *
+ * Fork, JAV-248: `stagedContent` judges a body the intent does not carry
+ * inline. `commit_page_upload` sends its page as `body_ref` and
+ * `preparePageAdmission` refuses an intent that holds both a body_ref and
+ * `content`, so the staged text is CHECKED ONLY: a refusal still refuses, and
+ * a pass keeps the caller's bytes rather than writing the normalized text
+ * back. Without this the gate read `intent.content === undefined` and
+ * `runMutationWritePolicy` returned an empty outcome, so an upload passed
+ * every contract unchecked.
+ */
 export async function applyMutationWritePolicy(
   ctx: OperationContext,
-  input: { sourceId: string | undefined; slug: string; intent: Record<string, unknown>; bypass?: unknown },
+  input: { sourceId: string | undefined; slug: string; intent: Record<string, unknown>; bypass?: unknown; stagedContent?: string },
 ): Promise<void> {
   passedReports.delete(ctx);
+  const staged = input.stagedContent !== undefined;
   const outcome = await runMutationWritePolicy(ctx, {
-    sourceId: input.sourceId, slug: input.slug, content: input.intent.content, bypass: input.bypass });
+    sourceId: input.sourceId, slug: input.slug, content: staged ? input.stagedContent : input.intent.content, bypass: input.bypass });
   if (outcome.rejection) throw new WritePolicyRefusal(outcome.rejection);
-  if (outcome.content !== undefined) input.intent.content = outcome.content;
+  if (!staged && outcome.content !== undefined) input.intent.content = outcome.content;
   if (outcome.report) passedReports.set(ctx, outcome.report);
 }
 

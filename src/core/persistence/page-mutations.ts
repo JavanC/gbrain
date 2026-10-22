@@ -21,6 +21,8 @@ import { receiptReservation } from './receipt-bytes.ts';
 import { assertPersistenceAccepting, estimatedRetryAfterMs, waiterOnlyOwner, onPersistenceLane, waitForWrite, writeResponse } from './service.ts';
 import { parseWireWriteWaitMs } from './write-wait.ts';
 import { assertTimelineNotOmitted, isTimelineSection, timelineSectionOf, type TimelineSection } from './timeline-omission.ts';
+import { isStagingBodyRef, stagedUploadText } from './page-upload.ts';
+import { bodyStagingGoneError } from '../engine-sql/page-body.ts';
 import { contentOriginTier } from '../trust/tier.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
 import { contentSizeHold } from '../markdown.ts';
@@ -369,7 +371,33 @@ export async function preparePageAdmission(ctx: OperationContext,
   // payloads only (op entry points pass writePolicy); a refusal throws before
   // anything is admitted — no journal row, write-through, auto-link or jobs.
   if (input.writePolicy && isGatedOperation(input.operation)) {
-    await applyMutationWritePolicy(ctx, { sourceId, slug, intent, bypass: p.bypass_policy });
+    // Fork, JAV-248: a staged body is not in `intent.content` (a body_ref and
+    // content cannot coexist, see above), so read the staged text and have the
+    // gate CHECK it without writing the normalized bytes back.
+    //
+    // Bounded at PAGE_MAX_BYTES on purpose: that is exactly where
+    // `prepareStagedUpload` stops holding a body as one string and streams it
+    // through the segmented import instead, and `upload-over-ceiling.test.ts`
+    // pins `wholeTexts: 0` for an over-ceiling upload. Reading past the ceiling
+    // here would materialize up to a 256 MiB page to measure a ratio. So the
+    // gate covers the same bodies every other content-level rule covers —
+    // `timeline_section` above is computed in that same under-ceiling branch.
+    // An over-ceiling upload therefore still bypasses the gate; that gap is
+    // wider than this one (timeline omission has it too) and is tracked on the
+    // ticket rather than closed with a refusal no other content rule raises.
+    //
+    // Fail closed within the bound: an unreadable staging refuses with the
+    // same error admission raises for it, never by skipping the gate.
+    let stagedContent: string | undefined;
+    if (staged && typeof intent.content !== 'string' && isStagingBodyRef(input.params.body_ref)
+      && input.params.body_ref.bytes <= PAGE_MAX_BYTES) {
+      const ref = input.params.body_ref;
+      const text = await stagedUploadText(ctx.engine, ref);
+      if (text === null) throw bodyStagingGoneError(slug, ref.staging_id, null);
+      stagedContent = text;
+    }
+    await applyMutationWritePolicy(ctx, { sourceId, slug, intent, bypass: p.bypass_policy,
+      ...(stagedContent !== undefined ? { stagedContent } : {}) });
   }
   // Preserve same-source diagnostics for new timeline writes without making
   // terminal replay depend on a page that may have since been purged.
