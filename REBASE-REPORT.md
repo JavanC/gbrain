@@ -184,7 +184,9 @@ MISSING	templates/bootstrap/template-repo/README.md	1	<!-- gbrain-template-stamp
 - 第三次 `GBRAIN_VERIFY_TIMEOUT=400 bun run verify`:`EXIT=0`,`[verify-parallel] elapsed=196s | pass=88 fail=0 skip=0 | all checks green`(typecheck 182s)。typecheck 超時是 4 核沙箱的時間問題,不是型別錯誤;單獨跑 `bun run typecheck` 每次 rc=0。
 
 ### 單元測試
-(進行中)
+- 依指示執行 `bun test > /tmp/units.txt 2>&1`(單一行程、DATABASE_URL 未設定)。**跑了 2 小時仍未結束,被背景任務的時間上限(最大值)砍掉,沒有 exit code。** 被砍前到達 208 個測試檔,記錄到 85 個檔、222 個 `(fail)`。部分輸出保存在 `/tmp/claude-0/units-partial.txt`(沙箱內,不會保留)。
+- 因為完整套件在這個環境跑不完,歸因改用:把這 85 個有失敗的檔,**每檔獨立一個 bun test 行程**,在本分支與乾淨上游 `v0.60.360.0` worktree 上各跑一次,比較失敗數(結果見下)。這只覆蓋「單行程 run 中已出現失敗的檔」,不是完整套件。
+(對照組進行中)
 
 ## 6. 沒驗到什麼 / 待人判斷
 
