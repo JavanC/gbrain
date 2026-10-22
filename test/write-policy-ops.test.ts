@@ -14,6 +14,10 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { randomUUID } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { __setFunnelPathForTests, enableFunnel } from '../src/core/funnel.ts';
 import { operations } from '../src/core/operations.ts';
 import type { Operation, OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -235,6 +239,25 @@ describe('validate_page', () => {
 });
 
 describe('put_page gate', () => {
+  test('a refused write is not recorded as a funnel save', async () => {
+    // The gate resolves a refusal as a response instead of throwing, so the
+    // funnel's pass-through would otherwise count a blocked write as a commit.
+    withPolicy({ 'brain-a': 'active' });
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-wp-funnel-'));
+    const path = join(dir, 'funnel.jsonl');
+    try {
+      __setFunnelPathForTests(path);
+      enableFunnel();
+      const res = await put_page.handler(writeCtx(), { slug: 'concepts/x', content: BAD }) as Record<string, unknown>;
+      expect(res.error).toBe('policy_violation');
+      const events = readFileSync(path, 'utf8').trim().split('\n').map(l => (JSON.parse(l) as { event: string }).event);
+      expect(events).toEqual(['enabled']);
+    } finally {
+      __setFunnelPathForTests(null);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('a violation returns machine-readable errors and writes nothing', async () => {
     withPolicy({ 'brain-a': 'active' });
     const res = await put_page.handler(writeCtx(), { slug: 'concepts/x', content: BAD }) as Record<string, unknown>;

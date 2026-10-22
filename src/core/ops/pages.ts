@@ -1,7 +1,6 @@
-import { funnelPassThrough } from '../funnel.ts';
 import { suffixedSlugDryRun } from '../persistence/suffixed-slug.ts';
 import { AGENT_CONTENT_PARAMS, PAGE_MUTATION_PARAMS, CAPTURE_EVENT_PARAMS, CAPTURE_CLI_PROVENANCE_PARAMS, WRITE_WAIT_PARAM } from '../persistence/params.ts';
-import { previewWritePolicy } from '../write-policy/mutation-gate.ts'; // Fork: source write-policy gate
+import { funnelSaveUnlessRefused, previewWritePolicy } from '../write-policy/mutation-gate.ts'; // Fork: source write-policy gate
 import { assertPurgeParams } from '../persistence/purge-params.ts';
 /**
  * Page CRUD operation cluster — pure move from operations.ts (v0.46.x
@@ -370,7 +369,7 @@ const put_page: Operation = {
       return preview.rejection ?? { dry_run: true, action: 'put_page', slug: p.slug, ...(preview.report ? { policy: preview.report } : {}) };
     }
     if (ctx.remote !== false && typeof p.slug === 'string') await assertLargePageAdmission(ctx.engine, p.slug, sourceId, p);
-    return submitPageMutation(ctx, { operation: 'put_page', params: p, writePolicy: true }).then(funnelPassThrough('save')).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error));
+    return submitPageMutation(ctx, { operation: 'put_page', params: p, writePolicy: true }).then(funnelSaveUnlessRefused).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error));
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };

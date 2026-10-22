@@ -16,6 +16,7 @@
 import type { OperationContext } from '../operations.ts';
 import { OperationError } from '../ops/contract.ts';
 import type { PolicyViolation } from './index.ts';
+import { recordFunnelEvent } from '../funnel.ts';
 
 export interface PolicyReport {
   contract_version: string;
@@ -172,4 +173,20 @@ export async function previewWritePolicy(
     content: p.content,
     bypass: p.bypass_policy,
   });
+}
+
+/**
+ * Fork: upstream's `funnelPassThrough('save')` counts every settled put_page,
+ * but a policy refusal RESOLVES as a response (`{ error, written: false }`)
+ * instead of throwing — so a blocked write would be recorded as a save and the
+ * funnel would conflate attempts with commits. Upstream's own intent is
+ * "a committed put_page records a save" (module-size-limits.tsv, D8 funnel),
+ * so count only what committed. Lives here, with the gate's other call sites,
+ * to keep the fork's footprint in upstream files to one call.
+ */
+export function funnelSaveUnlessRefused<T>(result: T): T {
+  const refused = typeof result === 'object' && result !== null
+    && (result as { error?: unknown }).error !== undefined;
+  if (!refused) recordFunnelEvent('save');
+  return result;
 }
