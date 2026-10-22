@@ -199,6 +199,11 @@ MISSING	templates/bootstrap/template-repo/README.md	1	<!-- gbrain-template-stamp
 - 單行程 run 的 222 個失敗,在每檔獨立行程下除上述 12 個外全部消失 → 是單一 `bun test` 行程內跨檔共享狀態的污染(上游自己的 fast loop 本來就分片跑),不是 fork 造成。但**沒有在乾淨上游上跑同樣的單行程 run**(時間不夠),所以這個說法沒有對照組。
 - 上一代參考數字(對 0.60.102):fork 112 / 乾淨上游 114、fork 獨有 0。本次數字口徑不同(85 個檔的子集),不能直接比較。
 
+### 完整單元套件對照(補跑,進行中)
+- 單行程 `bun test` 再試一次仍在背景 2 小時上限被砍(fork,187 個 `(fail)` 時截斷),放棄此口徑。
+- `GBRAIN_TEST_SHARD_TIMEOUT=3600 bun run test`:fork 4 個 shard 全部在 3600s 被砍(exit 124 / WEDGED),砍前 0–21 秒內都還有進度 → 4 核沙箱跑不完,不是卡死。作廢。
+- 進行中:`unset DATABASE_URL; GBRAIN_TEST_SHARD_TIMEOUT=14400 bun run test`,fork(`edd9a6de4`)跑完再跑乾淨上游 `ea5ac03fe`,序列、不並行。
+
 ## 6. 沒驗到什麼 / 待人判斷
 
 ### 沒驗到
