@@ -54,6 +54,7 @@ const load_timeline = () => import('./ops/timeline.ts') as Promise<Record<string
 const load_transcripts = () => import('./ops/transcripts.ts') as Promise<Record<string, unknown>>;
 const load_trust = () => import('./ops/trust.ts') as Promise<Record<string, unknown>>;
 const load_usage = () => import('./ops/usage.ts') as Promise<Record<string, unknown>>;
+const load_write_contract = () => import('./ops/write-contract.ts') as Promise<Record<string, unknown>>;
 const load_verbs = () => import('./verbs.ts') as Promise<Record<string, unknown>>;
 
 export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<string, unknown>>, string]> = {
@@ -81,6 +82,8 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "list_write_requests": [load_persistence, "persistenceOperations"],
   "list_write_conflicts": [load_persistence, "persistenceOperations"],
   "cancel_write_request": [load_persistence, "persistenceOperations"],
+  "get_write_contract": [load_write_contract, "writeContractOperations"],
+  "validate_page": [load_write_contract, "writeContractOperations"],
   "search": [load_search, "searchOperations"],
   "query": [load_search, "searchOperations"],
   "assemble_evidence": [load_search, "searchOperations"],

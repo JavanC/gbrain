@@ -481,6 +481,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "string",
         "description": "Server-set remotely.",
         "required": false
+      },
+      "bypass_policy": {
+        "type": "boolean",
+        "required": false,
+        "description": "Skip the source write-policy gate. LOCAL CLI ONLY — ignored for remote callers."
       }
     },
     "mutating": true,
@@ -1258,6 +1263,51 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "positional": [
         "request_id"
       ]
+    }
+  },
+  {
+    "name": "get_write_contract",
+    "outputRedaction": "no_stored_text",
+    "description": "Return the page-write contract for a source: which frontmatter fields you must supply, which ones the server fills or preserves, which page types each directory accepts, the connection-id rules, and a copy-pasteable template. Call this ONCE before your first put_page to a source (and again when contract_version changes). Sources that declare no policy return enforced: false, meaning put_page accepts any well-formed markdown.",
+    "params": {
+      "source_id": {
+        "type": "string",
+        "required": false,
+        "description": "Source to describe. Defaults to the caller's own source; a source outside the caller's grant is refused."
+      }
+    },
+    "scope": "read",
+    "area": "pages",
+    "cliHints": {
+      "name": "write-contract"
+    }
+  },
+  {
+    "name": "validate_page",
+    "outputRedaction": {
+      "exempt": "preflight echo of the caller's own put_page payload; the only stored text added is the target page's server-managed frontmatter values"
+    },
+    "description": "Preflight a put_page payload against the source write contract WITHOUT writing anything. Returns valid, machine-readable violations (each with a fix), and the normalized frontmatter the server would store. Same validator put_page runs, so a pass here means put_page will not reject the page.",
+    "params": {
+      "slug": {
+        "type": "string",
+        "required": true,
+        "description": "Page slug the content would be written to"
+      },
+      "content": {
+        "type": "string",
+        "required": true,
+        "description": "Full markdown content with YAML frontmatter"
+      }
+    },
+    "scope": "read",
+    "area": "pages",
+    "cliHints": {
+      "name": "validate-page",
+      "positional": [
+        "slug"
+      ],
+      "stdin": "content"
     }
   },
   {

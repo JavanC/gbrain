@@ -1,5 +1,7 @@
 # Source write policy — a discoverable, enforced page contract
 
+Per-file key-files entries for the fork-owned code: [`docs/architecture/fork-write-policy.md`](../architecture/fork-write-policy.md).
+
 A brain repo usually has house rules its markdown must follow: required
 frontmatter, which page types belong in which directory, how `connections`
 entries are written. Those rules typically live in a repo lint or a pre-commit

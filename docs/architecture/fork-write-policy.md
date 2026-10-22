@@ -1,6 +1,6 @@
 # Key files: Fork — source write policy and post-write enrichment
 
-[Subsystem index](../KEY_FILES.md). Read only the entries relevant to your change.
+[Subsystem index](KEY_FILES.md) (this fork-owned page is linked from [the write-policy guide](../guides/source-write-policy.md), not from the index: the index sits at its 10000-byte cap). Read only the entries relevant to your change.
 Current behavior and load-bearing invariants; history belongs in Git and CHANGELOG.
 These files are fork-owned (not in upstream gbrain); keeping their entries in a
 fork-owned page means an upstream rebase never conflicts on them.
