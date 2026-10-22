@@ -186,8 +186,22 @@ MISSING	templates/bootstrap/template-repo/README.md	1	<!-- gbrain-template-stamp
 ### 單元測試
 (進行中)
 
-## 6. 沒驗到什麼
-(待做)
+## 6. 沒驗到什麼 / 待人判斷
+
+### 沒驗到
+- **Postgres E2E 全部沒跑**(這個沙箱沒有 DATABASE_URL / docker),包括 fork 的 `test/e2e/write-policy-postgres.test.ts`、`test/e2e/post-write-enrichment-postgres.test.ts`,以及上游需要 Postgres 的 golden(schema-catalog / doctor-json)。
+- **preadmit cache 路徑沒有測試覆蓋**:`59f736366` 修的是只在 Postgres + `persistence.preadmit_cache` 開啟時才走的路徑(cached ctx 與 retry ctx)。修正是讀碼推論,沒有測試在該路徑上斷言 `policy` 回報存在,也沒驗證 policy refusal 在 retry 路徑的行為。
+- `post-write-enrichment` 在新的 `runLinksTimelinePass` 簽名下(budgetLeft / log)沒有實機跑過 worker;只有單元測試(PGLite)。
+- `--propose-include/-exclude/-limit` 與上游新增的「失敗頁後排 / 持有失敗頁」(GBRA-130 A-25)交互:沒有專門測試。上限計數只算 cache_hits + cache_misses,被上游 hold 的頁面是否計入沒有確認。
+- 沒有部署、沒有對真實 brain 跑過 dream / takes / put_page。
+- Contract goldens(`bun run regen:all --goldens`)沒有重產;若 fork 的 op 影響這些 golden,只會在對應測試失敗時顯現(見第 5 節)。
+
+### 待人判斷
+1. **put_page 被 policy 拒絕時仍記一次 `save` funnel event**:上游的 `funnelPassThrough('save')` 套在 `submitPageMutation` 的結果上,而 fork 的拒絕是 resolve 成 `{error, written:false}` response 而非 throw。是否要在拒絕時跳過 funnel 計數,需要決定。
+2. **fork 的 key-files 頁搬出 `key-files/`**:上游 `KEY_FILES.md` 在 v0.60.360.0 已是 9983/10000 bytes,且 `test/docs-navigation.test.ts` 要求每個 `key-files/*.md` 都在索引中出現,所以無法再加路由列。目前搬到 `docs/architecture/fork-write-policy.md`、由 fork 自有的 guide 連結。替代方案是壓縮某條上游列騰出空間(會增加 rebase 衝突面)。
+3. **page-body-readers 新增一列 `NONE`**:上游 ratchet 規定「新 reader 不給 row」,但 `NONE` 的定義是「這個名字不是 page body」。validate.ts 讀的是 agent 送進來的 payload 字串(必為 inline),不是儲存的 page row,所以用 NONE + 註記。是否接受此解釋需要判斷。
+4. **post-write-enrichment 的 `log` 接到 `console.error`**:sweep 本身預設是 no-op;選 stderr 是為了在 worker log 看得到 per-page 拒絕。
+5. **verify 的 typecheck 在預設 120s 上限下逾時**(4 核沙箱);400s 下全綠。CI 機器上是否會逾時未知。
 
 ## 進度
 - 已重放:23/23(加 1 個修正 commit)。全部已 push。
