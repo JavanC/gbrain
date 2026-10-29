@@ -294,6 +294,27 @@ before/after across every environment combination**。
   所以哪天想丟掉它,改設一條 `gbrain sweep --once` cron 就能等價替代。
 - 風險最高的是 write-policy(9 檔獨立子系統,上游 write-gate 若往 frontmatter 契約方向長就會撞上)。
 
+**2026-10-29 在這台實測過官方路了,而且發現更多。** 三個 pass 全部不再被拒
+(`gbrain sweep --once --source javan-brain`,exit 0、`skipped: []`,#5499 的三個拒絕都消失),
+花費 **$0**(`corpusIngested: 0`;`~/.gbrain/transcripts/corpus` 有 0 個 `.txt`、ambient writeback
+關著,所以第三個 pass 結構上沒東西可花錢 —— 先前擔心的 per-tick LLM 費用在這台不成立)。
+
+pass 2 的對帳用 probe 驗過(`inbox/sweep-pass2-probe`,已 soft delete;驗證期間把
+`writer.async_enrichment` 暫時關掉以隔離變數,事後已還原為 `true`):
+
+- **陽性對照成立**:第二次 sweep 回報 `linksExtracted: 2`,所以這台的 pass 2 真的會寫邊,
+  前一次的全 0 是「沒有 stale 頁」而不是「壞掉」(獨立佐證:doctor `stale_mentions` 說
+  205 條 by-mention 邊全部仍可由當前 gazetteer 推出)。
+- **但移除根本不需要 sweep。** 第一版頁面帶一個 wikilink,邊由**上游自己的** post-commit
+  `mention_links` effect 建立(`link_source: mcp-remote-mention`,不是 sweep、不是我們的 job);
+  第二版抽掉那個 mention 之後,**在任何 sweep 之前邊就已經不見了**,所以 sweep 回報
+  `linksRemoved: 0`。2026-08-16 當初量到的「只會新增不會對帳」,在 plain mention 這條路上
+  已經由上游的寫入路徑本身解決。
+
+**仍未驗**:typed / frontmatter 邊。那條受 `autopilot.incremental_extract_include_frontmatter`
+(預設 off)控制,而**我們的 job 和上游的 sweep 都讀同一個 knob**,所以兩條路在這件事上同樣受限 ——
+要判斷能不能完全拔掉我們的 patch,這是剩下唯一的未知。
+
 **host cron 是官方明文推薦,不是回報者的權宜之計。** 查證於 upstream/master:
 `INSTALL_FOR_AGENTS.md:387`(「For HTTP, arrange explicit host-side `gbrain sweep --once`」)、
 `docs/guides/memory-boundaries.md:63`、`docs/UPGRADING_DOWNSTREAM_AGENTS.md:43/127/226/252`、
