@@ -267,11 +267,29 @@ before/after across every environment combination**。
 | JAV-258 空的 `storage.db_only: []` 讓整份 gbrain.yml 被退掉 | 搜過 `db_only` / `storage.db_only` / `db_tracked`,**沒有對應的上游 issue**。但上游 `src/core/storage-config.ts` 的 `hasUnresolvedDbOnlyDeclaration` docstring 明寫:*"Known false positive: an intentionally empty `db_only: []` also counts, since it resolves to the same empty config."*(確認於 upstream/master `968f73708`,2026-10-29 07:27) | **不提**。上游已知並刻意接受,這不是缺陷報告 |
 | JAV-259 `purge-deleted` 撞 42501 | 上游 #7636(open, triage:bug-verified)已涵蓋同一個 guard | **不提**,會重複 |
 | JAV-264 guard 函式 `search_path` 缺 `pg_temp` | 上游 #7632 已經在修 | **不提**,會重複 |
-| write-policy / post-write-enrichment / propose_takes / takes --apply-review 四條主線 | **未查證**。搜 `frontmatter` 顯示上游在 write-gate 這塊很活躍(#7903、#7855、#7905、#7832),我們的 patch 與其現行機制重疊多少需要逐 patch 比對上游程式碼,不是幾個搜尋能回答的 | **待辦**,獨立工作 |
+| 四條主線與上游現行機制的重疊 | **已於 2026-10-29 逐 patch 比對完畢(見下方「四條主線的重疊比對」)**。結論:四條都沒有被上游取代,其中兩條適合提 PR | **兩條可提**,見下 |
 
 一個保留:JAV-258 上游記為「known false positive」,但實際破壞力比那句話暗示的大 ——
 它讓**整份** `gbrain.yml` 被退掉,連 `storage.db_tracked` 一起,九個目錄全部失效。
 這個「嚴重性落差」可以當 issue 提,但不符 #4197 形狀,2026-10-29 由 Javan 裁決**不提**。
+
+
+### 四條主線的重疊比對(2026-10-29)
+
+方法:`git diff upstream/master...HEAD -- src/`(30 檔、+2230 行)逐條對上上游的現行實作,
+每個「上游沒有」的結論都跑過陽性對照(確認路徑存在、grep 在該檔會命中、同族 key 查得到)。
+
+| 主線 | 上游現行機制 | 重疊 | 可提 PR? |
+|---|---|---|---|
+| **write-policy**(`src/core/write-policy/*`,9 檔) | `src/core/write-gate*`(6 檔 + migration v227)是**提示注入偵測器**,按 trust tier 路由、model-free pattern table,判 allow/flag/quarantine/reject | **零**。上游管「這段文字可不可信」,我們管「這頁的 frontmatter 合不合源的契約」(required_fields、type_path_rules、slug_rules、language_rules)。上游沒有 `ops/write-contract.ts`、沒有 `get_write_contract` / `validate_page` op | ❌ 太大。9 檔 2 千行、帶新 op 與新 config,不符 #4197 的 one-line-defect 形狀。要提得先拆成 proposal issue |
+| **post-write-enrichment** | `enrichment-service.ts` + `minions/handlers/enrich.ts` 存在,但**沒有任何寫入路徑會排這個 job**(對照組:同三個檔 grep `page` 各 91/219/95 命中,所以不是 grep 失效) | 我們的 job **呼叫上游自己的** `sweep.ts:runLinksTimelinePass`,不是另一套實作 | ✅ **最強候選**。上游在 `src/core/ops/pages.ts:336` 的 op description 裡**自己寫出這個缺口**:「typed links are skipped (stdio `gbrain serve` sweeps later, `gbrain serve --http` does not self-sweep)」。缺陷純粹、已被上游文件承認、修法重用他們自己的 pass |
+| **propose_takes 模型路由** | 上游 `models.dream.*` 已有 synthesize / extract_atoms / patterns / synthesize_verdict / triage;`phase-config-values.ts` 只給 propose_takes 一個 timeout key,**沒有 model key** | 我們的 `models.dream.propose_takes` 疊在上游 `opts.model ?? getChatModel()` 之上 | ✅ **第二候選**。完全照上游既有命名慣例補一個缺的格子;上游 `behavior-change-notice.ts` 的 `0.60.249.0` 顯示他們正在逐 phase 補這類路由,方向一致 |
+| **takes --apply-review** | 上游 `acceptProposal` / `rejectProposal` 已是唯一的 queue→canonical 路徑,一次一個 id | 核心**是**上游的,我們只加批次化(讀 JSON 決策檔、部分失敗不中止、exit code 反映半套套用) | ⚠️ 可提但價值薄。純 UX 批次糖,不是缺陷修復;上游可能偏好自己設計 CLI 形狀 |
+
+**維護結論:四條都要繼續扛。** 沒有任何一條被上游取代,所以下次 rebase 的 patch 數不變。
+風險最低的是 post-write-enrichment(重用上游 pass,上游若自己修就能直接丟掉);
+風險最高的是 write-policy(9 檔獨立子系統,上游 write-gate 若往 frontmatter 契約方向長就會撞上)。
+
 
 ### 方法註記
 
