@@ -220,7 +220,7 @@ MISSING	templates/bootstrap/template-repo/README.md	1	<!-- gbrain-template-stamp
 ## 6. 沒驗到什麼 / 待人判斷
 
 ### 沒驗到
-- **Postgres E2E 全部沒跑**(這個沙箱沒有 DATABASE_URL / docker),包括 fork 的 `test/e2e/write-policy-postgres.test.ts`、`test/e2e/post-write-enrichment-postgres.test.ts`,以及上游需要 Postgres 的 golden(schema-catalog / doctor-json)。
+- **Postgres E2E** — 寫本報告時全部沒跑(那個沙箱沒有 DATABASE_URL / docker)。**2026-10-29 部分補驗**:fork 的兩個已在本機 Postgres 上跑過並通過,`test/e2e/write-policy-postgres.test.ts` 與 `test/e2e/post-write-enrichment-postgres.test.ts`,5 pass / 0 fail(`DATABASE_URL=postgresql:///gbrain_test`,以文件指定的一次性 `GBRAIN_TEST_ALLOW_DATABASE_URL=1` opt-in 通過執行層 guard,未 export)。確認它確實連上 Postgres 而非靜默跳過:`gbrain_test` 被建出 151 張表,且生產 `gbrain` 的 live page 數不變。**上游需要 Postgres 的 golden(schema-catalog / doctor-json)仍然沒跑** —— 不在 fork 子集範圍內,不要把本項當成全部驗完。
 - **preadmit cache 路徑沒有測試覆蓋**:`59f736366` 修的是只在 Postgres + `persistence.preadmit_cache` 開啟時才走的路徑(cached ctx 與 retry ctx)。修正是讀碼推論,沒有測試在該路徑上斷言 `policy` 回報存在,也沒驗證 policy refusal 在 retry 路徑的行為。
 - `post-write-enrichment` 在新的 `runLinksTimelinePass` 簽名下(budgetLeft / log)沒有實機跑過 worker;只有單元測試(PGLite)。
 - `--propose-include/-exclude/-limit` 與上游新增的「失敗頁後排 / 持有失敗頁」(GBRA-130 A-25)交互:沒有專門測試。上限計數只算 cache_hits + cache_misses,被上游 hold 的頁面是否計入沒有確認。
@@ -253,7 +253,14 @@ MISSING	templates/bootstrap/template-repo/README.md	1	<!-- gbrain-template-stamp
    逾時」是空問題;本機跑 verify 不會遇到,那是 4 核沙箱的時間問題。
 
 ## 進度
-- 已重放:23/23(全部已 push)+ 4 個 `fix` commit:`59f736366`(policy 回報 ctx key)、`1f7a89d33`(verify 新 gate)、`51973a38e`(新 contract 表 / golden)、`e2bbe380c`(拒絕不算 funnel save,2026-10-22 裁決後補)。
+- 已重放:23/23(全部已 push)+ 5 個 `fix` commit:`59f736366`(policy 回報 ctx key)、`1f7a89d33`(verify 新 gate)、`51973a38e`(新 contract 表 / golden)、`e2bbe380c`(拒絕不算 funnel save,2026-10-22 裁決後補)、`9109b76b8`(gate `commit_page_upload` 的 staged page body,JAV-248,2026-10-23 —— 本報告原寫「4 個」,漏了這筆)。
 - 第 6 節六個待判斷項**已全部裁決**(見該節)。完整套件對照**放棄**(雲端環境跑不完,見第 5 節),歸因結論不受影響。
 - 未處理:無。
-- 分支:`javan/rebase-v0.60.360`,版本 `0.60.360.1`,基於 `v0.60.360.0`。未開 PR、未部署、未動 `master` / `javan/rebase-v0.60`。
+- 分支:`javan/rebase-v0.60.360`,版本 `0.60.360.1`,基於 `v0.60.360.0`。未開 PR、未動 `master` / `javan/rebase-v0.60`。
+- **2026-10-29 更正:已部署。** 上一行原本寫「未部署」。那是 2026-10-22 16:40 的狀態,部署發生在那之後而本報告沒跟上 —— 這句過時陳述在 2026-10-29 誤導過一個 session,使它準備去執行一個不存在的部署。現況證據(當日獨立查核,兩個 session 交叉確認):
+  - `gbrain --version` → `0.60.360.1`
+  - `which gbrain` → `~/.bun/bin/gbrain`,symlink 到工作區的 `src/cli.ts`。**所以切換本 repo 的分支即生效,沒有另外的「部署」動作**
+  - `http://127.0.0.1:3131/health` → `version` / `installed_version` 皆 `0.60.360.1`,`restart_pending: false`
+  - `gbrain apply-migrations --dry-run` → schemaVer 264 / latest 264,pending 空
+  - DB `config.version` = 264;origin 與本機 HEAD 皆 `9109b76b8`
+  - rollback 路徑:`gbrain-pre-promote-0.60.360-quiesced-20261022-221903.dump` + 分支 `javan/rebase-v0.60`
