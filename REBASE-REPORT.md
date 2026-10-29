@@ -294,6 +294,16 @@ before/after across every environment combination**。
   所以哪天想丟掉它,改設一條 `gbrain sweep --once` cron 就能等價替代。
 - 風險最高的是 write-policy(9 檔獨立子系統,上游 write-gate 若往 frontmatter 契約方向長就會撞上)。
 
+**host cron 是官方明文推薦,不是回報者的權宜之計。** 查證於 upstream/master:
+`INSTALL_FOR_AGENTS.md:387`(「For HTTP, arrange explicit host-side `gbrain sweep --once`」)、
+`docs/guides/memory-boundaries.md:63`、`docs/UPGRADING_DOWNSTREAM_AGENTS.md:43/127/226/252`、
+`SECURITY.md:426`、三份 `brain-ops` SKILL.md、`put_page` 的 op description 與 remote hint
+(`page-advisories.ts:92`),而 `test/put-page-remote-autolink-hint.test.ts` 還把這段文字當 golden 鎖住。
+
+而且**上游是逐 lane 決定的,不是沒想過**:`serve --http` 其實會自己排 `armCorpusDrain`
+(每 10 分鐘、60 秒預算,CHANGELOG 10887),只是**只掃 session corpus**,刻意把 links/timeline
+留給運維。所以「--http 不自掃 links」是一個有意識的分工選擇,我們的 per-write job 是在改那個選擇。
+
 **方法教訓:讀上游程式碼不等於查過上游 issue。** 上表第一版把 post-write-enrichment 評為
 「最強候選」,憑的是上游 op description 裡自承的缺口;一查 issue 就看到 #5499 已經完整回報、
 已經修、而且修的是另一個地方。專案頁的「提之前先確認有沒有相關 issue」就是為了擋這個。
