@@ -225,7 +225,9 @@ MISSING	templates/bootstrap/template-repo/README.md	1	<!-- gbrain-template-stamp
 - `post-write-enrichment` 在新的 `runLinksTimelinePass` 簽名下(budgetLeft / log)沒有實機跑過 worker;只有單元測試(PGLite)。
 - `--propose-include/-exclude/-limit` 與上游新增的「失敗頁後排 / 持有失敗頁」(GBRA-130 A-25)交互:沒有專門測試。上限計數只算 cache_hits + cache_misses,被上游 hold 的頁面是否計入沒有確認。
 - 完整單元套件(`bun test` 全部)沒有完成過,只驗了 85 個檔;其餘 `.serial` / `.slow` 與未到達的檔沒有獨立跑。
-- 沒有部署、沒有對真實 brain 跑過 dream / takes / put_page。
+- ~~沒有部署~~ — **2026-10-29 更正:已部署並在生產上跑了約一週**(見檔尾「進度」的更正段)。對真實 brain 的實際使用也已累積:`put_page` / `edit_page` / `add_timeline_entry` / `delete_page`(軟刪除)在 2026-10-27~29 多次成功,`trust confirm` 20 筆、`trust scan` 1150 筆。
+  **仍然沒驗到的是 `dream` 與 `takes`** —— 這兩條路本報告寫作至今都沒有對真實 brain 跑過。
+  另外在生產上發現一個與本次 rebase 無關的既有缺陷:`pages purge-deleted` 的物理 `DELETE` 一律失敗(42501,JAV-259);該 brain 歷史上從未成功 purge 過,不是本次升級造成。
 - Contract goldens(`bun run regen:all --goldens`)沒有重產;若 fork 的 op 影響這些 golden,只會在對應測試失敗時顯現(見第 5 節)。
 
 ### 待人判斷 — **2026-10-22 已由 Javan 裁決**
@@ -251,6 +253,31 @@ MISSING	templates/bootstrap/template-repo/README.md	1	<!-- gbrain-template-stamp
 5. **verify 的 typecheck 在預設 120s 上限下逾時** → **不處理,降為已知環境事實**。這個 fork
    用分支交付、不開 PR、沒有 CI(`origin/master` 停在 0.37.8.0 且早已分岔),所以「CI 會不會
    逾時」是空問題;本機跑 verify 不會遇到,那是 4 核沙箱的時間問題。
+
+## 7. 上游投稿檢查(2026-10-29)
+
+專案頁 `projects/gbrain-fork-maintenance` 的「Open upstream contributions」要求每次 review
+都檢查一輪。這次的結果:**沒有適合提 PR 的項目,一個都沒提。**
+
+判準沿用該頁記錄的 #4197 形狀:**one line, a pure defect, and a table of measured
+before/after across every environment combination**。
+
+| 候選 | 查證結果 | 結論 |
+|---|---|---|
+| JAV-258 空的 `storage.db_only: []` 讓整份 gbrain.yml 被退掉 | 搜過 `db_only` / `storage.db_only` / `db_tracked`,**沒有對應的上游 issue**。但上游 `src/core/storage-config.ts` 的 `hasUnresolvedDbOnlyDeclaration` docstring 明寫:*"Known false positive: an intentionally empty `db_only: []` also counts, since it resolves to the same empty config."*(確認於 upstream/master `968f73708`,2026-10-29 07:27) | **不提**。上游已知並刻意接受,這不是缺陷報告 |
+| JAV-259 `purge-deleted` 撞 42501 | 上游 #7636(open, triage:bug-verified)已涵蓋同一個 guard | **不提**,會重複 |
+| JAV-264 guard 函式 `search_path` 缺 `pg_temp` | 上游 #7632 已經在修 | **不提**,會重複 |
+| write-policy / post-write-enrichment / propose_takes / takes --apply-review 四條主線 | **未查證**。搜 `frontmatter` 顯示上游在 write-gate 這塊很活躍(#7903、#7855、#7905、#7832),我們的 patch 與其現行機制重疊多少需要逐 patch 比對上游程式碼,不是幾個搜尋能回答的 | **待辦**,獨立工作 |
+
+一個保留:JAV-258 上游記為「known false positive」,但實際破壞力比那句話暗示的大 ——
+它讓**整份** `gbrain.yml` 被退掉,連 `storage.db_tracked` 一起,九個目錄全部失效。
+這個「嚴重性落差」可以當 issue 提,但不符 #4197 形狀,2026-10-29 由 Javan 裁決**不提**。
+
+### 方法註記
+
+第一輪搜尋用了五個多詞查詢(例如 `write policy frontmatter required fields`),**五個全部零命中**。
+`gh search` 的多詞是 AND,幾乎不可能全中。用一個已知會命中的詞當控制組驗過搜尋工具正常之後,
+改用單詞重查就有結果了。**零命中不等於上游沒有** —— 先驗證工具,再相信負面結果。
 
 ## 進度
 - 已重放:23/23(全部已 push)+ 5 個 `fix` commit:`59f736366`(policy 回報 ctx key)、`1f7a89d33`(verify 新 gate)、`51973a38e`(新 contract 表 / golden)、`e2bbe380c`(拒絕不算 funnel save,2026-10-22 裁決後補)、`9109b76b8`(gate `commit_page_upload` 的 staged page body,JAV-248,2026-10-23 —— 本報告原寫「4 個」,漏了這筆)。
