@@ -311,9 +311,28 @@ pass 2 的對帳用 probe 驗過(`inbox/sweep-pass2-probe`,已 soft delete;驗�
   `linksRemoved: 0`。2026-08-16 當初量到的「只會新增不會對帳」,在 plain mention 這條路上
   已經由上游的寫入路徑本身解決。
 
-**仍未驗**:typed / frontmatter 邊。那條受 `autopilot.incremental_extract_include_frontmatter`
-(預設 off)控制,而**我們的 job 和上游的 sweep 都讀同一個 knob**,所以兩條路在這件事上同樣受限 ——
-要判斷能不能完全拔掉我們的 patch,這是剩下唯一的未知。
+**typed / frontmatter 邊也驗完了(2026-10-29),而且答案是三方都不一樣**
+(probe `inbox/typed-edge-probe`,frontmatter 的 `related:` 應產生 `related_to` 邊,
+`link-extraction.ts:1623`;目標只寫在 frontmatter、body 完全沒提,所以 mention 邊無法解釋命中):
+
+| 路徑 | 會建 typed 邊? | 證據 |
+|---|---|---|
+| fork 的 post-write job | **不會** | job 207(knob off)與 209(knob on)都完成,`get_links` 都是 `[]` |
+| 上游 maintenance sweep | **不會** | knob off/on 各跑一次,`linksExtracted: 0`、`skipped: []` |
+| 官方 `gbrain extract links --source db --include-frontmatter` | **會** | dry-run 明確輸出 `{"from":"inbox/typed-edge-probe","type":"related_to","link_source":"frontmatter"}` |
+
+兩個非預期發現:
+
+1. **`autopilot.incremental_extract_include_frontmatter` 打開並不足夠。** 把它設成 `true` 之後
+   job 和 sweep 仍然不建 typed 邊;只有**命令列顯式 `--include-frontmatter`** 有效。
+   所以 fork 的 job 在 typed 邊這件事上**完全沒有優勢** —— 它和上游 sweep 一樣不做。
+2. **這台的 nightly agent 已經在跑官方 lane 了。** `com.javan.gbrain.nightly-extract`(每天 04:00)
+   執行 `gbrain extract all --source db --source-id javan-brain`,**但沒有帶 `--include-frontmatter`**。
+   所以 typed 邊目前**沒有任何路徑在產生** —— 這是我們自己設定的缺口,與 fork 取捨無關。
+   加那一個 flag 就能補上。
+
+驗證期間的設定變更都已還原(knob 回到未設、`writer.async_enrichment` 回到 `true`),
+兩個 probe 頁已 soft delete,`--dry-run` 沒有寫入任何東西。
 
 **host cron 是官方明文推薦,不是回報者的權宜之計。** 查證於 upstream/master:
 `INSTALL_FOR_AGENTS.md:387`(「For HTTP, arrange explicit host-side `gbrain sweep --once`」)、
